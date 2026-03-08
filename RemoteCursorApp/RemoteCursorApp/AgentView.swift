@@ -174,12 +174,10 @@ struct AgentView: View {
                         connectionMode: connectionMode,
                         repo: repo,
                         conversation: conv,
+                        repoSessionId: getSessionId(workspace: repo.path),
                         onConnectionLost: onConnectionLost,
                         onSessionUpdated: { newSid in
                             setSessionId(workspace: repo.path, value: newSid)
-                            if let convId = activeConversation?.id {
-                                ChatStore.shared.updateConversationSession(conversationId: convId, sessionId: newSid)
-                            }
                             reloadConversations()
                         },
                         onDismiss: {
@@ -238,7 +236,8 @@ struct AgentView: View {
 
     private func startNewChat() {
         guard let repo = selectedRepo else { return }
-        let conv = ChatStore.shared.createConversation(workspacePath: repo.path, sessionId: nil, title: "")
+        let existingSessionId = getSessionId(workspace: repo.path)
+        let conv = ChatStore.shared.createConversation(workspacePath: repo.path, sessionId: existingSessionId, title: "")
         activeConversation = conv
         showChatDetail = true
         reloadConversations()
@@ -246,21 +245,13 @@ struct AgentView: View {
 
     private func openOrCreateConversationWithMessage(_ msg: String) {
         guard let repo = selectedRepo else { return }
-        if let sid = getSessionId(workspace: repo.path),
-           let existing = ChatStore.shared.conversationForSession(workspacePath: repo.path, sessionId: sid) {
-            activeConversation = existing
-        } else {
-            let conv = ChatStore.shared.createConversation(workspacePath: repo.path, sessionId: getSessionId(workspace: repo.path), title: "")
-            activeConversation = conv
-        }
+        let conv = ChatStore.shared.createConversation(workspacePath: repo.path, sessionId: getSessionId(workspace: repo.path), title: "")
+        activeConversation = conv
         showChatDetail = true
     }
 
     private func deleteConversation(_ conv: Conversation) {
         ChatStore.shared.deleteConversation(conversationId: conv.id)
-        if conv.sessionId != nil {
-            setSessionId(workspace: conv.workspacePath, value: nil)
-        }
         reloadConversations()
     }
 
@@ -339,6 +330,7 @@ struct ChatDetailView: View {
     let connectionMode: ConnectionMode?
     let repo: RepoItem
     let conversation: Conversation
+    let repoSessionId: String?
     var onConnectionLost: (() -> Void)?
     var onSessionUpdated: ((String) -> Void)?
     var onDismiss: () -> Void
@@ -486,7 +478,7 @@ struct ChatDetailView: View {
             }
         }
         .onAppear {
-            sessionId = conversation.sessionId
+            sessionId = repoSessionId
             loadMessagesAsync()
         }
         .sheet(isPresented: $showCommandResult) {
@@ -501,7 +493,6 @@ struct ChatDetailView: View {
             ImagePicker(source: imagePickerSource) { data in
                 showImagePicker = false
                 pendingImageData = data
-                uploadAndAttachImage(data)
             }
         }
         .confirmationDialog("Attach Image", isPresented: $showImageSourcePicker) {
@@ -613,6 +604,39 @@ struct ChatDetailView: View {
                 .padding(.vertical, 4)
             }
 
+            if let imgData = pendingImageData, let uiImage = UIImage(data: imgData) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 80, height: 80)
+                        .cornerRadius(10)
+                        .clipped()
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Photo attached")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        Text("Tap send to upload & ask agent")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        pendingImageData = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color(.systemGray6))
+            }
+
             HStack(alignment: .bottom, spacing: 8) {
                 Button {
                     showImageSourcePicker = true
@@ -641,16 +665,20 @@ struct ChatDetailView: View {
                 }
 
                 Button {
-                    sendMessage()
+                    if pendingImageData != nil {
+                        sendMessageWithImage()
+                    } else {
+                        sendMessage()
+                    }
                 } label: {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
                         .foregroundStyle(
-                            message.trimmingCharacters(in: .whitespaces).isEmpty || loading
+                            (message.trimmingCharacters(in: .whitespaces).isEmpty && pendingImageData == nil) || loading
                                 ? Color.gray : Color.accentColor
                         )
                 }
-                .disabled(message.trimmingCharacters(in: .whitespaces).isEmpty || loading)
+                .disabled((message.trimmingCharacters(in: .whitespaces).isEmpty && pendingImageData == nil) || loading)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -662,34 +690,97 @@ struct ChatDetailView: View {
 
     @ViewBuilder
     private var voiceOverlay: some View {
+        let isReview = !speech.isRecording && !speech.transcript.isEmpty
         NavigationStack {
-            VStack(spacing: 24) {
+            VStack(spacing: 20) {
                 Spacer()
-                Image(systemName: speech.isRecording ? "waveform.circle.fill" : "mic.circle.fill")
-                    .font(.system(size: 80))
-                    .foregroundStyle(speech.isRecording ? Color.red : Color.accentColor)
-                    .opacity(speech.isRecording ? 0.6 : 1.0)
-                    .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: speech.isRecording)
 
-                Text(speech.isRecording ? "Listening…" : "Stopped")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-
-                ScrollView {
-                    Text(speech.transcript.isEmpty ? "Say something…" : speech.transcript)
-                        .font(.body)
-                        .foregroundStyle(speech.transcript.isEmpty ? .secondary : .primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
+                if speech.isRecording {
+                    Image(systemName: "waveform.circle.fill")
+                        .font(.system(size: 72))
+                        .foregroundStyle(.red)
+                        .opacity(0.6)
+                        .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: speech.isRecording)
+                    Text("Listening…")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                } else if isReview {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 56))
+                        .foregroundStyle(.green)
+                    Text("Review Transcript")
+                        .font(.headline)
+                } else {
+                    Image(systemName: "mic.circle.fill")
+                        .font(.system(size: 72))
+                        .foregroundStyle(Color.accentColor)
+                    Text("Tap mic to start")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
                 }
-                .frame(maxHeight: 200)
-                .background(Color(.systemGray6))
-                .cornerRadius(12)
-                .padding(.horizontal)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    if isReview {
+                        Text("Your transcribed text:")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal)
+                    }
+                    ScrollView {
+                        Text(speech.transcript.isEmpty ? "Say something…" : speech.transcript)
+                            .font(isReview ? .body : .callout)
+                            .foregroundStyle(speech.transcript.isEmpty ? .secondary : .primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                    }
+                    .frame(maxHeight: isReview ? 250 : 160)
+                    .background(isReview ? Color(.systemGray5) : Color(.systemGray6))
+                    .cornerRadius(12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(isReview ? Color.green.opacity(0.5) : Color.clear, lineWidth: 2)
+                    )
+                    .padding(.horizontal)
+                }
 
                 Spacer()
 
-                HStack(spacing: 20) {
+                VStack(spacing: 12) {
+                    if isReview {
+                        Button {
+                            let text = speech.transcript
+                            speech.stopRecording()
+                            message += (message.isEmpty ? "" : " ") + text
+                            showVoiceOverlay = false
+                        } label: {
+                            Label("Use Text", systemImage: "checkmark.circle.fill")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button {
+                            speech.startRecording()
+                        } label: {
+                            Label("Re-record", systemImage: "arrow.counterclockwise")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    } else if speech.isRecording {
+                        Button {
+                            speech.stopRecording()
+                        } label: {
+                            Label("Stop Recording", systemImage: "stop.circle.fill")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
+                    }
+
                     Button {
                         speech.stopRecording()
                         showVoiceOverlay = false
@@ -698,34 +789,15 @@ struct ChatDetailView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
-                    .tint(.red)
-
-                    if speech.isRecording {
-                        Button {
-                            speech.stopRecording()
-                        } label: {
-                            Label("Stop", systemImage: "stop.circle.fill")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                    } else if !speech.transcript.isEmpty {
-                        Button {
-                            message += (message.isEmpty ? "" : " ") + speech.transcript
-                            showVoiceOverlay = false
-                        } label: {
-                            Label("Use Text", systemImage: "checkmark.circle.fill")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
+                    .tint(.secondary)
                 }
                 .padding(.horizontal)
                 .padding(.bottom)
             }
-            .navigationTitle("Voice Input")
+            .navigationTitle(isReview ? "Review Transcript" : "Voice Input")
             .navigationBarTitleDisplayMode(.inline)
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
     }
 
     // MARK: - Command Result Sheet
@@ -874,7 +946,6 @@ struct ChatDetailView: View {
                     if let newSid = res.sessionId {
                         sessionId = newSid
                         onSessionUpdated?(newSid)
-                        ChatStore.shared.updateConversationSession(conversationId: conversation.id, sessionId: newSid)
                     }
                     let content = (res.output ?? "") + (res.error.map { "\n\nError: \($0)" } ?? "")
                     if !content.isEmpty {
@@ -956,25 +1027,31 @@ struct ChatDetailView: View {
         commandResult = nil
     }
 
-    private func uploadAndAttachImage(_ data: Data) {
+    private func sendMessageWithImage() {
+        guard let imgData = pendingImageData else { return }
+        let userText = message.trimmingCharacters(in: .whitespaces)
+        pendingImageData = nil
         uploadingImage = true
+
         Task {
             do {
                 let remotePath: String
                 if connectionMode == .wifi {
                     remotePath = try await HTTPClient(baseURL: wifiURL.trimmingCharacters(in: .whitespaces))
-                        .uploadImage(data)
+                        .uploadImage(imgData)
                 } else {
-                    remotePath = try await peer.uploadImage(data)
+                    remotePath = try await peer.uploadImage(imgData)
                 }
                 await MainActor.run {
                     uploadingImage = false
-                    message += (message.isEmpty ? "" : "\n") + "📷 I've attached a screenshot saved at: \(remotePath)\nPlease look at this image and help me with what you see."
+                    let imageRef = "I've attached a screenshot saved at: \(remotePath)\nPlease look at this image and help me with what you see."
+                    message = userText.isEmpty ? imageRef : "\(userText)\n\n\(imageRef)"
+                    sendMessage()
                 }
             } catch {
                 await MainActor.run {
                     uploadingImage = false
-                    message += "\n[Image upload failed: \(error.localizedDescription)]"
+                    message = userText.isEmpty ? "[Image upload failed: \(error.localizedDescription)]" : userText
                 }
             }
         }

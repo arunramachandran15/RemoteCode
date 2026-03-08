@@ -91,11 +91,11 @@ final class SpeechRecognizer: ObservableObject {
     }
 
     func stopRecording() {
+        guard isRecording || audioEngine.isRunning else { return }
         audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus: 0)
         recognitionRequest?.endAudio()
         recognitionRequest = nil
-        recognitionTask?.cancel()
         recognitionTask = nil
         isRecording = false
     }
