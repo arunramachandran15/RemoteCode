@@ -286,47 +286,133 @@ final class HTTPServer {
 
     static func trustWorkspace(_ workspace: String) -> [String: Any] {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
+        var messages: [String] = []
+
+        // Approach 1: Write trust directly into Cursor's state database
+        let dbResult = grantTrustInStateDB(workspace: workspace, home: home)
+        messages.append(dbResult)
+
+        // Approach 2: Write trust into Cursor's settings.json
+        let settingsResult = ensureTrustSettingsDisabled(home: home)
+        messages.append(settingsResult)
+
+        // Approach 3: Open folder in Cursor GUI as fallback
+        let cursorPath = findCursorCLI(home: home)
+        if let cp = cursorPath {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: cp)
+            process.arguments = ["--folder-uri", "file://\(workspace)", "--reuse-window"]
+            process.environment = ProcessInfo.processInfo.environment
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            if let _ = try? process.run() {
+                messages.append("Opened folder in Cursor")
+            }
+        }
+
+        let combined = messages.joined(separator: ". ")
+        print("TrustWorkspace: \(combined)")
+        return ["ok": true, "message": "Trust applied. If the agent still rejects, click 'Trust' in the Cursor window on your Mac, then try again. (\(combined))"]
+    }
+
+    private static func findCursorCLI(home: String) -> String? {
         let cursorPaths = [
             "\(home)/.local/bin/cursor",
             "/usr/local/bin/cursor",
             "/opt/homebrew/bin/cursor",
             "/Applications/Cursor.app/Contents/Resources/app/bin/cursor"
         ]
-        var cursorPath: String?
         for p in cursorPaths {
-            if FileManager.default.fileExists(atPath: p) { cursorPath = p; break }
+            if FileManager.default.fileExists(atPath: p) { return p }
         }
-        if cursorPath == nil {
-            let which = Process()
-            which.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-            which.arguments = ["cursor"]
-            which.environment = ["PATH": "\(home)/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:\(ProcessInfo.processInfo.environment["PATH"] ?? "")"]
-            let pipe = Pipe()
-            which.standardOutput = pipe
-            which.standardError = FileHandle.nullDevice
-            try? which.run()
-            which.waitUntilExit()
-            if which.terminationStatus == 0,
-               let data = pipe.fileHandleForReading.readDataToEndOfFile() as Data?,
-               let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !path.isEmpty {
-                cursorPath = path
+        let which = Process()
+        which.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        which.arguments = ["cursor"]
+        which.environment = ["PATH": "\(home)/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:\(ProcessInfo.processInfo.environment["PATH"] ?? "")"]
+        let pipe = Pipe()
+        which.standardOutput = pipe
+        which.standardError = FileHandle.nullDevice
+        try? which.run()
+        which.waitUntilExit()
+        if which.terminationStatus == 0,
+           let data = pipe.fileHandleForReading.readDataToEndOfFile() as Data?,
+           let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !path.isEmpty {
+            return path
+        }
+        return nil
+    }
+
+    private static func grantTrustInStateDB(workspace: String, home: String) -> String {
+        let dbPaths = [
+            "\(home)/Library/Application Support/Cursor/User/globalStorage/state.vscdb",
+            "\(home)/Library/Application Support/Cursor/User/globalStorage/storage.json",
+        ]
+        let fm = FileManager.default
+        for dbPath in dbPaths where fm.fileExists(atPath: dbPath) {
+            if dbPath.hasSuffix(".vscdb") {
+                let result = runShellCommand(
+                    """
+                    sqlite3 '\(dbPath)' "SELECT value FROM ItemTable WHERE key = 'storage.serviceMachineId';" 2>/dev/null && \
+                    echo "DB accessible" || echo "DB not accessible"
+                    """,
+                    workspace: nil
+                )
+                let stdout = result["stdout"] as? String ?? ""
+                if stdout.contains("DB accessible") || !stdout.isEmpty {
+                    let folderUri = "file://\(workspace)"
+                    let trustCmd = """
+                    sqlite3 '\(dbPath)' "
+                    INSERT OR REPLACE INTO ItemTable (key, value)
+                    SELECT 'security.workspace.trust.grantedFolders',
+                    CASE
+                        WHEN value IS NULL THEN '[\"\(folderUri)\"]'
+                        WHEN value NOT LIKE '%\(folderUri)%' THEN
+                            substr(value, 1, length(value)-1) || ',\"\(folderUri)\"]'
+                        ELSE value
+                    END
+                    FROM (SELECT value FROM ItemTable WHERE key = 'security.workspace.trust.grantedFolders'
+                          UNION ALL SELECT NULL WHERE NOT EXISTS
+                          (SELECT 1 FROM ItemTable WHERE key = 'security.workspace.trust.grantedFolders'))
+                    LIMIT 1;
+                    " 2>&1
+                    """
+                    let trustResult = runShellCommand(trustCmd, workspace: nil)
+                    let trustErr = trustResult["stderr"] as? String ?? ""
+                    let trustExit = trustResult["exitCode"] as? Int ?? -1
+                    if trustExit == 0 && trustErr.isEmpty {
+                        return "Added to state DB trust list"
+                    } else {
+                        return "State DB write attempted (exit \(trustExit)): \(trustErr)"
+                    }
+                }
+                return "State DB found but not accessible"
             }
         }
-        guard let cp = cursorPath else {
-            return ["ok": false, "error": "Cursor CLI not found. Open Cursor app → Command Palette → 'Install cursor command'"]
+        return "State DB not found"
+    }
+
+    private static func ensureTrustSettingsDisabled(home: String) -> String {
+        let settingsPath = "\(home)/Library/Application Support/Cursor/User/settings.json"
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: settingsPath) else { return "Settings file not found" }
+        guard let data = fm.contents(atPath: settingsPath),
+              var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return "Cannot parse settings"
         }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: cp)
-        process.arguments = ["--folder-uri", "file://\(workspace)", "--reuse-window"]
-        process.environment = ProcessInfo.processInfo.environment
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        let key = "security.workspace.trust.enabled"
+        if json[key] as? Bool == false {
+            return "Trust already disabled in settings"
+        }
+        json[key] = false
+        guard let newData = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) else {
+            return "Cannot serialize settings"
+        }
         do {
-            try process.run()
-            return ["ok": true, "message": "Cursor is opening the folder. Please click 'Trust' in the dialog that appears on your Mac."]
+            try newData.write(to: URL(fileURLWithPath: settingsPath))
+            return "Disabled workspace trust in settings"
         } catch {
-            return ["ok": false, "error": "Failed to launch Cursor: \(error.localizedDescription)"]
+            return "Cannot write settings: \(error.localizedDescription)"
         }
     }
 

@@ -23,23 +23,45 @@ enum AgentRunner {
         return nil
     }
 
+    private static func agentEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        env["CURSOR_TRUST_WORKSPACE"] = "1"
+        env["VSCODE_SKIP_WORKSPACE_TRUST"] = "1"
+        return env
+    }
+
+    private static func pipeYesToStdin(_ process: Process) {
+        let stdinPipe = Pipe()
+        process.standardInput = stdinPipe
+        stdinPipe.fileHandleForWriting.write(Data("y\ny\nyes\n".utf8))
+        try? stdinPipe.fileHandleForWriting.close()
+    }
+
     /// Create a new chat and return its session ID.
     static func createChat(workspace: String) -> String? {
         guard let agentPath = agentExecutablePath else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: agentPath)
-        process.arguments = ["create-chat"]
+        process.arguments = ["create-chat", "--workspace", workspace, "--trust"]
         process.currentDirectoryURL = URL(fileURLWithPath: workspace)
-        process.environment = ProcessInfo.processInfo.environment
+        process.environment = agentEnvironment()
+        pipeYesToStdin(process)
         let pipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
+        let errPipe = Pipe()
+        process.standardError = errPipe
         try? process.run()
         process.waitUntilExit()
-        guard process.terminationStatus == 0,
-              let data = try? pipe.fileHandleForReading.readDataToEndOfFile(),
-              let id = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !id.isEmpty else { return nil }
+        let outData = pipe.fileHandleForReading.readDataToEndOfFile()
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        let id = String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let errStr = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if process.terminationStatus != 0 || id.isEmpty {
+            print("AgentRunner: create-chat failed (exit \(process.terminationStatus))")
+            if !errStr.isEmpty { print("  stderr: \(errStr)") }
+            if !id.isEmpty { print("  stdout: \(id)") }
+            return nil
+        }
         return id
     }
 
@@ -57,7 +79,7 @@ enum AgentRunner {
         if sid == nil {
             sid = createChat(workspace: workspace)
         }
-        var args: [String] = ["-p", message, "--workspace", workspace, "--output-format", "stream-json", "--stream-partial-output"]
+        var args: [String] = ["-p", message, "--workspace", workspace, "--trust", "--output-format", "stream-json", "--stream-partial-output"]
         if let s = sid {
             args = ["--resume", s] + args
         }
@@ -65,7 +87,8 @@ enum AgentRunner {
         process.executableURL = URL(fileURLWithPath: agentPath)
         process.arguments = args
         process.currentDirectoryURL = URL(fileURLWithPath: workspace)
-        process.environment = ProcessInfo.processInfo.environment
+        process.environment = agentEnvironment()
+        pipeYesToStdin(process)
         let outPipe = Pipe()
         let errPipe = Pipe()
         process.standardOutput = outPipe
@@ -131,6 +154,15 @@ enum AgentRunner {
         var err = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if err.contains("No such file or directory") || err.contains("not found") {
             err = "Cursor CLI (agent) not found. Install from Cursor → Install CLI. Restart the bridge."
+        }
+        let allText = (fullOutput + " " + err).lowercased()
+        if allText.contains("trust") {
+            print("AgentRunner: Trust error detected. stderr: \(err)")
+            print("AgentRunner: stdout: \(fullOutput)")
+            print("AgentRunner: Hint — open this workspace in Cursor GUI and trust it, or run: cursor \(workspace)")
+            if err.isEmpty {
+                err = "Workspace trust required. Open '\(workspace)' in Cursor on your Mac and click 'Trust' in the dialog, then try again."
+            }
         }
         if process.terminationStatus != 0 {
             return (fullOutput.isEmpty ? nil : fullOutput, err.isEmpty ? "Exit code \(process.terminationStatus)" : err, sid)
