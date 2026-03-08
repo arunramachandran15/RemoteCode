@@ -118,6 +118,13 @@ final class PeerClient: NSObject, ObservableObject, MCSessionDelegate, MCNearbyS
 
     private var pendingResourceContinuations: [String: CheckedContinuation<String, Error>] = [:]
 
+    func trustWorkspace(_ workspace: String) async throws -> (ok: Bool, message: String) {
+        let dict = try await sendRequest(type: "trustWorkspace", params: ["workspace": workspace], key: nil) as? [String: Any]
+        let ok = dict?["ok"] as? Bool ?? false
+        let msg = dict?["message"] as? String ?? dict?["error"] as? String ?? (ok ? "Done" : "Unknown error")
+        return (ok, msg)
+    }
+
     func runAgent(workspace: String, message: String, sessionId: String? = nil) async throws -> AgentResponse {
         var params: [String: Any] = ["workspace": workspace, "message": message]
         if let s = sessionId { params["sessionId"] = s }

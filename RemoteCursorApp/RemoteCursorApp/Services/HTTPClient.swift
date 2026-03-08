@@ -162,6 +162,20 @@ final class HTTPClient {
         return path
     }
 
+    func trustWorkspace(_ workspace: String) async throws -> (ok: Bool, message: String) {
+        let url = URL(string: baseURL + "/trust-workspace")!
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["workspace": workspace])
+        req.timeoutInterval = 30
+        let (data, _) = try await URLSession.shared.data(for: req)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let ok = json?["ok"] as? Bool ?? false
+        let msg = json?["message"] as? String ?? json?["error"] as? String ?? (ok ? "Done" : "Unknown error")
+        return (ok, msg)
+    }
+
     func healthCheck() async -> Bool {
         guard let url = URL(string: baseURL + "/health") else { return false }
         do {

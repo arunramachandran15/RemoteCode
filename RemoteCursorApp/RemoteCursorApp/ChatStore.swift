@@ -130,6 +130,45 @@ final class ChatStore {
         }
     }
 
+    struct WorkspaceSummary {
+        let path: String
+        let conversationCount: Int
+        let lastActivity: Date
+        var displayName: String { (path as NSString).lastPathComponent }
+    }
+
+    func distinctWorkspaces() -> [WorkspaceSummary] {
+        queue.sync {
+            guard let db = self.db else { return [] }
+            let sql = """
+            SELECT c.workspace_path,
+                   COUNT(*) as conv_count,
+                   MAX(COALESCE(
+                       (SELECT MAX(m.created_at) FROM chat_messages m WHERE m.conversation_id = c.id),
+                       c.created_at
+                   )) as last_activity
+            FROM conversations c
+            GROUP BY c.workspace_path
+            ORDER BY last_activity DESC;
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            var result: [WorkspaceSummary] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let wp = String(cString: sqlite3_column_text(stmt, 0))
+                let count = Int(sqlite3_column_int(stmt, 1))
+                let ts = sqlite3_column_double(stmt, 2)
+                result.append(WorkspaceSummary(
+                    path: wp,
+                    conversationCount: count,
+                    lastActivity: Date(timeIntervalSince1970: ts)
+                ))
+            }
+            return result
+        }
+    }
+
     func listConversations(workspacePath: String) -> [Conversation] {
         queue.sync {
             guard let db = self.db else { return [] }
@@ -209,6 +248,27 @@ final class ChatStore {
             conversationId.withCString { sqlite3_bind_text(stmt, 1, $0, -1, SQLITE_TRANSIENT) }
             sqlite3_step(stmt)
             sqlite3_finalize(stmt)
+        }
+    }
+
+    func deleteAllForWorkspace(workspacePath: String) {
+        queue.async { [weak self] in
+            guard let db = self?.db else { return }
+            var stmt: OpaquePointer?
+
+            let delMsgs = "DELETE FROM chat_messages WHERE workspace_path = ?;"
+            if sqlite3_prepare_v2(db, delMsgs, -1, &stmt, nil) == SQLITE_OK {
+                workspacePath.withCString { sqlite3_bind_text(stmt, 1, $0, -1, SQLITE_TRANSIENT) }
+                sqlite3_step(stmt)
+                sqlite3_finalize(stmt)
+            }
+
+            let delConvs = "DELETE FROM conversations WHERE workspace_path = ?;"
+            if sqlite3_prepare_v2(db, delConvs, -1, &stmt, nil) == SQLITE_OK {
+                workspacePath.withCString { sqlite3_bind_text(stmt, 1, $0, -1, SQLITE_TRANSIENT) }
+                sqlite3_step(stmt)
+                sqlite3_finalize(stmt)
+            }
         }
     }
 

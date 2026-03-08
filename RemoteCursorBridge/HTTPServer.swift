@@ -189,6 +189,17 @@ final class HTTPServer {
             let result = Self.saveUploadedImage(imageData)
             let json = (try? JSONSerialization.data(withJSONObject: result)) ?? Data()
             send(conn: conn, status: "200 OK", body: json, contentType: "application/json")
+        } else if req.method == "POST" && req.path == "/trust-workspace" {
+            guard let str = bodyStr,
+                  let obj = try? JSONSerialization.jsonObject(with: Data(str.utf8)) as? [String: Any],
+                  let workspace = obj["workspace"] as? String else {
+                send(conn: conn, status: "400 Bad Request", body: "{\"error\":\"Missing workspace\"}", contentType: "application/json")
+                conn.cancel()
+                return
+            }
+            let result = Self.trustWorkspace(workspace)
+            let json = (try? JSONSerialization.data(withJSONObject: result)) ?? Data()
+            send(conn: conn, status: "200 OK", body: json, contentType: "application/json")
         } else if req.method == "GET" && req.path == "/health" {
             send(conn: conn, status: "200 OK", body: "{\"ok\":true}", contentType: "application/json")
         } else {
@@ -270,6 +281,52 @@ final class HTTPServer {
             return ["path": path, "ok": true]
         } catch {
             return ["error": error.localizedDescription]
+        }
+    }
+
+    static func trustWorkspace(_ workspace: String) -> [String: Any] {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let cursorPaths = [
+            "\(home)/.local/bin/cursor",
+            "/usr/local/bin/cursor",
+            "/opt/homebrew/bin/cursor",
+            "/Applications/Cursor.app/Contents/Resources/app/bin/cursor"
+        ]
+        var cursorPath: String?
+        for p in cursorPaths {
+            if FileManager.default.fileExists(atPath: p) { cursorPath = p; break }
+        }
+        if cursorPath == nil {
+            let which = Process()
+            which.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+            which.arguments = ["cursor"]
+            which.environment = ["PATH": "\(home)/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:\(ProcessInfo.processInfo.environment["PATH"] ?? "")"]
+            let pipe = Pipe()
+            which.standardOutput = pipe
+            which.standardError = FileHandle.nullDevice
+            try? which.run()
+            which.waitUntilExit()
+            if which.terminationStatus == 0,
+               let data = pipe.fileHandleForReading.readDataToEndOfFile() as Data?,
+               let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !path.isEmpty {
+                cursorPath = path
+            }
+        }
+        guard let cp = cursorPath else {
+            return ["ok": false, "error": "Cursor CLI not found. Open Cursor app → Command Palette → 'Install cursor command'"]
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: cp)
+        process.arguments = ["--folder-uri", "file://\(workspace)", "--reuse-window"]
+        process.environment = ProcessInfo.processInfo.environment
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            return ["ok": true, "message": "Cursor is opening the folder. Please click 'Trust' in the dialog that appears on your Mac."]
+        } catch {
+            return ["ok": false, "error": "Failed to launch Cursor: \(error.localizedDescription)"]
         }
     }
 

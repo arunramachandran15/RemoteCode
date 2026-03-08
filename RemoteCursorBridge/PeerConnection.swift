@@ -80,6 +80,13 @@ final class PeerConnection: NSObject {
             }
             let result = HTTPServer.writeFile(at: path, content: content)
             for (k, v) in result { response[k] = v }
+        case "trustWorkspace":
+            guard let workspace = json["workspace"] as? String else {
+                response["error"] = "Missing workspace"
+                break
+            }
+            let result = HTTPServer.trustWorkspace(workspace)
+            for (k, v) in result { response[k] = v }
         case "uploadImage":
             response["error"] = "Use resource transfer for image uploads"
         default:

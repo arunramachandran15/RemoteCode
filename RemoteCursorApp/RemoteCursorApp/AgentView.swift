@@ -47,6 +47,58 @@ private func messageTime(_ date: Date) -> String {
     return fmt.string(from: date)
 }
 
+// MARK: - Confirm Action
+
+private enum ConfirmAction: Identifiable {
+    case deleteConversation(Conversation)
+    case deleteAllChats(repoPath: String)
+    case removeRepo(path: String)
+    case resetSession(path: String)
+
+    var id: String {
+        switch self {
+        case .deleteConversation(let c): return "delConv-\(c.id)"
+        case .deleteAllChats(let p): return "delAll-\(p)"
+        case .removeRepo(let p): return "removeRepo-\(p)"
+        case .resetSession(let p): return "resetSess-\(p)"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .deleteConversation: return "Delete Conversation"
+        case .deleteAllChats: return "Delete All Chats"
+        case .removeRepo: return "Remove Repository"
+        case .resetSession: return "Reset Agent Session"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .deleteConversation: return "This conversation and all its messages will be permanently deleted."
+        case .deleteAllChats: return "All conversations and messages for this repository will be permanently deleted."
+        case .removeRepo: return "This will remove the repository from your list and delete all its conversations and messages."
+        case .resetSession: return "This will clear the agent session. A new session will start on the next message. Existing chats are kept."
+        }
+    }
+
+    var buttonLabel: String {
+        switch self {
+        case .deleteConversation: return "Delete"
+        case .deleteAllChats: return "Delete All"
+        case .removeRepo: return "Remove"
+        case .resetSession: return "Reset"
+        }
+    }
+
+    var isDestructive: Bool {
+        switch self {
+        case .resetSession: return false
+        default: return true
+        }
+    }
+}
+
 // MARK: - AgentView (Conversation List)
 
 struct AgentView: View {
@@ -57,12 +109,16 @@ struct AgentView: View {
     @Binding var externalMessage: String
     @State private var repos: [RepoItem] = []
     @State private var selectedRepo: RepoItem?
+    @State private var savedWorkspaces: [ChatStore.WorkspaceSummary] = []
     @State private var conversations: [Conversation] = []
     @State private var activeConversation: Conversation?
     @State private var showChatDetail = false
+    @State private var showRepoBrowser = false
     @State private var loadError: String?
     @State private var initialLoad = true
     @State private var loading = false
+    @State private var confirmAction: ConfirmAction?
+    @State private var showConfirm = false
     @AppStorage(sessionStorageKey) private var sessionStorageData = "{}"
     @AppStorage("lastSelectedRepo") private var lastSelectedRepoPath = ""
 
@@ -80,17 +136,101 @@ struct AgentView: View {
 
     var body: some View {
         List {
-            Section("Repository") {
-                if repos.isEmpty && !loading {
-                    Text(loadError ?? "No repos").foregroundStyle(loadError != nil ? .red : .secondary)
-                } else {
-                    Picker("Repo", selection: $selectedRepo) {
-                        Text("Select…").tag(nil as RepoItem?)
-                        ForEach(repos) { r in
-                            Text(r.displayName).tag(r as RepoItem?)
+            if let repo = selectedRepo {
+                Section {
+                    HStack {
+                        Image(systemName: "folder.fill")
+                            .foregroundStyle(.blue)
+                            .font(.title3)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(repo.displayName)
+                                .font(.headline)
+                            Text(repo.path)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        Button("Change") {
+                            showRepoBrowser = true
+                        }
+                        .font(.subheadline)
+                    }
+                } header: {
+                    Text("Current Repository")
+                }
+            }
+
+            if !savedWorkspaces.isEmpty {
+                Section {
+                    ForEach(savedWorkspaces, id: \.path) { ws in
+                        Button {
+                            selectedRepo = RepoItem(id: ws.path, path: ws.path)
+                        } label: {
+                            HStack {
+                                Image(systemName: "folder.fill")
+                                    .foregroundStyle(ws.path == selectedRepo?.path ? .blue : .orange)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(ws.displayName)
+                                        .font(.subheadline)
+                                        .fontWeight(ws.path == selectedRepo?.path ? .semibold : .regular)
+                                        .foregroundStyle(.primary)
+                                    Text(ws.path)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text("\(ws.conversationCount)")
+                                        .font(.caption)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.blue.opacity(0.15))
+                                        .clipShape(Capsule())
+                                    Text(chatTimestamp(ws.lastActivity))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                if ws.path == selectedRepo?.path {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.blue)
+                                }
+                            }
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                askConfirm(.removeRepo(path: ws.path))
+                            } label: {
+                                Label("Remove", systemImage: "trash")
+                            }
+                            Button {
+                                askConfirm(.resetSession(path: ws.path))
+                            } label: {
+                                Label("Reset Session", systemImage: "arrow.counterclockwise")
+                            }
+                            .tint(.orange)
                         }
                     }
-                    .pickerStyle(.menu)
+                } header: {
+                    Text("Your Repositories")
+                } footer: {
+                    Text("Swipe left on a repo to remove it or reset its agent session.")
+                        .font(.caption2)
+                }
+            }
+
+            Section {
+                Button {
+                    showRepoBrowser = true
+                } label: {
+                    HStack {
+                        Image(systemName: "folder.badge.plus")
+                        Text(selectedRepo == nil ? "Browse & Select Repository" : "Add New Repository")
+                    }
+                }
+                if let err = loadError {
+                    Text(err).font(.caption).foregroundStyle(.red)
                 }
             }
 
@@ -107,9 +247,9 @@ struct AgentView: View {
                             } label: {
                                 conversationRow(conv)
                             }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 Button(role: .destructive) {
-                                    deleteConversation(conv)
+                                    askConfirm(.deleteConversation(conv))
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
@@ -137,12 +277,32 @@ struct AgentView: View {
         .navigationTitle("Agent")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if selectedRepo != nil {
+            if let repo = selectedRepo {
                 ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        startNewChat()
+                    Menu {
+                        Button {
+                            startNewChat()
+                        } label: {
+                            Label("New Chat", systemImage: "square.and.pencil")
+                        }
+                        Divider()
+                        Button {
+                            askConfirm(.resetSession(path: repo.path))
+                        } label: {
+                            Label("Reset Agent Session", systemImage: "arrow.counterclockwise")
+                        }
+                        Button(role: .destructive) {
+                            askConfirm(.deleteAllChats(repoPath: repo.path))
+                        } label: {
+                            Label("Delete All Chats", systemImage: "trash")
+                        }
+                        Button(role: .destructive) {
+                            askConfirm(.removeRepo(path: repo.path))
+                        } label: {
+                            Label("Remove Repository", systemImage: "folder.badge.minus")
+                        }
                     } label: {
-                        Image(systemName: "square.and.pencil")
+                        Image(systemName: "ellipsis.circle")
                     }
                 }
             }
@@ -150,6 +310,7 @@ struct AgentView: View {
         .onAppear {
             if initialLoad {
                 initialLoad = false
+                loadSavedWorkspaces()
                 loadRepos()
             }
             reloadConversations()
@@ -164,6 +325,34 @@ struct AgentView: View {
                 externalMessage = ""
                 openOrCreateConversationWithMessage(msg)
             }
+        }
+        .sheet(isPresented: $showRepoBrowser) {
+            FolderBrowserSheet(
+                peer: peer,
+                wifiURL: wifiURL,
+                connectionMode: connectionMode,
+                onSelect: { path in
+                    let repo = RepoItem(id: path, path: path)
+                    selectedRepo = repo
+                    if !repos.contains(where: { $0.path == path }) {
+                        repos.insert(repo, at: 0)
+                    }
+                    showRepoBrowser = false
+                },
+                configRepos: repos
+            )
+        }
+        .alert(
+            confirmAction?.title ?? "",
+            isPresented: $showConfirm,
+            presenting: confirmAction
+        ) { action in
+            Button(action.buttonLabel, role: action.isDestructive ? .destructive : nil) {
+                executeConfirm(action)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { action in
+            Text(action.message)
         }
         .fullScreenCover(isPresented: $showChatDetail) {
             if let conv = activeConversation, let repo = selectedRepo {
@@ -183,6 +372,7 @@ struct AgentView: View {
                         onDismiss: {
                             showChatDetail = false
                             reloadConversations()
+                            loadSavedWorkspaces()
                         }
                     )
                 }
@@ -253,6 +443,54 @@ struct AgentView: View {
     private func deleteConversation(_ conv: Conversation) {
         ChatStore.shared.deleteConversation(conversationId: conv.id)
         reloadConversations()
+        loadSavedWorkspaces()
+    }
+
+    private func askConfirm(_ action: ConfirmAction) {
+        confirmAction = action
+        showConfirm = true
+    }
+
+    private func executeConfirm(_ action: ConfirmAction) {
+        switch action {
+        case .deleteConversation(let conv):
+            deleteConversation(conv)
+        case .deleteAllChats(let path):
+            deleteAllChats(path)
+        case .removeRepo(let path):
+            removeRepo(path)
+        case .resetSession(let path):
+            clearSession(path)
+        }
+    }
+
+    private func deleteAllChats(_ repoPath: String? = nil) {
+        let path = repoPath ?? selectedRepo?.path
+        guard let p = path else { return }
+        ChatStore.shared.deleteAllForWorkspace(workspacePath: p)
+        if selectedRepo?.path == p { conversations = [] }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            loadSavedWorkspaces()
+        }
+    }
+
+    private func removeRepo(_ path: String) {
+        ChatStore.shared.deleteAllForWorkspace(workspacePath: path)
+        setSessionId(workspace: path, value: nil)
+        if selectedRepo?.path == path {
+            selectedRepo = nil
+            conversations = []
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            loadSavedWorkspaces()
+        }
+    }
+
+    private func clearSession(_ path: String) {
+        setSessionId(workspace: path, value: nil)
+        if selectedRepo?.path == path {
+            reloadConversations()
+        }
     }
 
     private func toggleRead(_ conv: Conversation) {
@@ -267,6 +505,17 @@ struct AgentView: View {
     private func reloadConversations() {
         guard let repo = selectedRepo else { conversations = []; return }
         conversations = ChatStore.shared.listConversations(workspacePath: repo.path)
+    }
+
+    private func loadSavedWorkspaces() {
+        savedWorkspaces = ChatStore.shared.distinctWorkspaces()
+        if selectedRepo == nil, !lastSelectedRepoPath.isEmpty {
+            if savedWorkspaces.contains(where: { $0.path == lastSelectedRepoPath }) {
+                selectedRepo = RepoItem(id: lastSelectedRepoPath, path: lastSelectedRepoPath)
+            } else if let first = savedWorkspaces.first {
+                selectedRepo = RepoItem(id: first.path, path: first.path)
+            }
+        }
     }
 
     private func loadRepos() {
@@ -285,6 +534,8 @@ struct AgentView: View {
                     if selectedRepo == nil {
                         if let saved = repos.first(where: { $0.path == lastSelectedRepoPath }) {
                             selectedRepo = saved
+                        } else if !savedWorkspaces.isEmpty, let first = savedWorkspaces.first {
+                            selectedRepo = RepoItem(id: first.path, path: first.path)
                         } else if let first = repos.first {
                             selectedRepo = first
                         }
@@ -318,6 +569,259 @@ private enum ChatItem: Identifiable {
         switch self {
         case .dateSeparator(_, let key): return "sep-\(key)"
         case .message(let msg): return msg.id
+        }
+    }
+}
+
+// MARK: - Folder Browser Sheet
+
+struct FolderBrowserSheet: View {
+    @ObservedObject var peer: PeerClient
+    let wifiURL: String
+    let connectionMode: ConnectionMode?
+    let onSelect: (String) -> Void
+    let configRepos: [RepoItem]
+    @Environment(\.dismiss) private var dismiss
+
+    private static let staticRoots: [(String, String, String)] = [
+        ("/Volumes", "Volumes", "externaldrive.fill"),
+        ("/Users", "Users", "person.2.fill"),
+        ("/", "Root", "internaldrive.fill"),
+    ]
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Starting Points") {
+                    ForEach(Self.staticRoots, id: \.0) { path, label, icon in
+                        NavigationLink {
+                            FolderListView(
+                                peer: peer,
+                                wifiURL: wifiURL,
+                                connectionMode: connectionMode,
+                                dirPath: path,
+                                title: label,
+                                onSelect: onSelect
+                            )
+                        } label: {
+                            Label(label, systemImage: icon)
+                        }
+                    }
+                }
+
+                if !configRepos.isEmpty {
+                    Section("Folders from Mac") {
+                        ForEach(configRepos) { r in
+                            NavigationLink {
+                                FolderListView(
+                                    peer: peer,
+                                    wifiURL: wifiURL,
+                                    connectionMode: connectionMode,
+                                    dirPath: r.path,
+                                    title: r.displayName,
+                                    onSelect: onSelect
+                                )
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(r.displayName)
+                                    Text(r.path)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Section("Enter Path Manually") {
+                    ManualPathEntry(onSelect: onSelect)
+                }
+            }
+            .navigationTitle("Choose Repository")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+private struct ManualPathEntry: View {
+    let onSelect: (String) -> Void
+    @State private var manualPath = ""
+
+    var body: some View {
+        HStack {
+            TextField("/path/to/repo", text: $manualPath)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Go") {
+                let p = manualPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !p.isEmpty else { return }
+                onSelect(p)
+            }
+            .disabled(manualPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+}
+
+private struct FolderListView: View {
+    @ObservedObject var peer: PeerClient
+    let wifiURL: String
+    let connectionMode: ConnectionMode?
+    let dirPath: String
+    let title: String
+    let onSelect: (String) -> Void
+    @State private var items: [FileItem] = []
+    @State private var loading = true
+    @State private var errorMsg: String?
+    @State private var trustStatus: String?
+    @State private var trusting = false
+
+    var body: some View {
+        Group {
+            if loading {
+                ProgressView("Loading...")
+            } else if let err = errorMsg {
+                VStack(spacing: 12) {
+                    Text(err).foregroundStyle(.red).font(.caption)
+                    Button("Retry") { loadFolder() }
+                }
+                .padding()
+            } else if items.isEmpty {
+                Text("Empty folder").foregroundStyle(.secondary).padding()
+            } else {
+                List {
+                    if let status = trustStatus {
+                        Section {
+                            Label(status, systemImage: "checkmark.shield")
+                                .font(.caption)
+                                .foregroundStyle(.green)
+                        }
+                    }
+                    ForEach(items.filter { $0.isDirectory }.sorted(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending })) { item in
+                        NavigationLink {
+                            FolderListView(
+                                peer: peer,
+                                wifiURL: wifiURL,
+                                connectionMode: connectionMode,
+                                dirPath: item.path,
+                                title: item.name,
+                                onSelect: onSelect
+                            )
+                        } label: {
+                            Label(item.name, systemImage: "folder.fill")
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button {
+                        onSelect(dirPath)
+                    } label: {
+                        Label("Select as Repository", systemImage: "checkmark.circle")
+                    }
+                    Button {
+                        trustAndSelect()
+                    } label: {
+                        Label("Trust & Select", systemImage: "checkmark.shield")
+                    }
+                    Button {
+                        trustFolder()
+                    } label: {
+                        Label("Trust Only", systemImage: "shield")
+                    }
+                } label: {
+                    if trusting {
+                        ProgressView()
+                    } else {
+                        Text("Select")
+                            .fontWeight(.semibold)
+                    }
+                }
+            }
+        }
+        .onAppear { loadFolder() }
+    }
+
+    private func trustFolder() {
+        trusting = true
+        Task {
+            do {
+                let result: (ok: Bool, message: String)
+                if connectionMode == .wifi {
+                    result = try await HTTPClient(baseURL: wifiURL.trimmingCharacters(in: .whitespaces))
+                        .trustWorkspace(dirPath)
+                } else {
+                    result = try await peer.trustWorkspace(dirPath)
+                }
+                await MainActor.run {
+                    trusting = false
+                    trustStatus = result.ok ? "Trusted — approve dialog on Mac" : result.message
+                }
+            } catch {
+                await MainActor.run {
+                    trusting = false
+                    trustStatus = "Error: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func trustAndSelect() {
+        trusting = true
+        Task {
+            do {
+                if connectionMode == .wifi {
+                    _ = try await HTTPClient(baseURL: wifiURL.trimmingCharacters(in: .whitespaces))
+                        .trustWorkspace(dirPath)
+                } else {
+                    _ = try await peer.trustWorkspace(dirPath)
+                }
+                await MainActor.run {
+                    trusting = false
+                    onSelect(dirPath)
+                }
+            } catch {
+                await MainActor.run {
+                    trusting = false
+                    onSelect(dirPath)
+                }
+            }
+        }
+    }
+
+    private func loadFolder() {
+        loading = true
+        errorMsg = nil
+        Task {
+            do {
+                let result: [FileItem]
+                if connectionMode == .wifi {
+                    result = try await HTTPClient(baseURL: wifiURL.trimmingCharacters(in: .whitespaces))
+                        .listFiles(path: dirPath)
+                } else {
+                    result = try await peer.listFiles(path: dirPath)
+                }
+                await MainActor.run {
+                    items = result
+                    loading = false
+                }
+            } catch {
+                await MainActor.run {
+                    errorMsg = error.localizedDescription
+                    loading = false
+                }
+            }
         }
     }
 }
@@ -362,6 +866,9 @@ struct ChatDetailView: View {
     @State private var isNearBottom = true
     @State private var streamingBuffer = ""
     @State private var scrollProxy: ScrollViewProxy?
+    @State private var showTrustAlert = false
+    @State private var trustMessage = ""
+    @State private var trustingWorkspace = false
 
     private let haptic = UIImpactFeedbackGenerator(style: .light)
 
@@ -492,8 +999,10 @@ struct ChatDetailView: View {
         }
         .sheet(isPresented: $showImagePicker) {
             ImagePicker(source: imagePickerSource) { data in
+                if !data.isEmpty {
+                    pendingImageData = data
+                }
                 showImagePicker = false
-                pendingImageData = data
             }
         }
         .confirmationDialog("Attach Image", isPresented: $showImageSourcePicker) {
@@ -514,6 +1023,54 @@ struct ChatDetailView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(imageUploadError ?? "")
+        }
+        .alert("Workspace Trust Required", isPresented: $showTrustAlert) {
+            Button("Trust This Folder") {
+                trustCurrentWorkspace()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This folder needs to be trusted in Cursor before the agent can work with it. Tap 'Trust This Folder' to open it in Cursor on your Mac, then approve the trust dialog.")
+        }
+        .overlay {
+            if trustingWorkspace {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("Opening folder in Cursor on Mac...")
+                        .font(.subheadline)
+                    Text("Please approve the trust dialog on your Mac, then try sending your message again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(24)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .padding()
+            }
+        }
+    }
+
+    private func trustCurrentWorkspace() {
+        trustingWorkspace = true
+        Task {
+            do {
+                let result: (ok: Bool, message: String)
+                if connectionMode == .wifi {
+                    result = try await HTTPClient(baseURL: wifiURL.trimmingCharacters(in: .whitespaces))
+                        .trustWorkspace(repo.path)
+                } else {
+                    result = try await peer.trustWorkspace(repo.path)
+                }
+                await MainActor.run {
+                    trustingWorkspace = false
+                    trustMessage = result.message
+                }
+            } catch {
+                await MainActor.run {
+                    trustingWorkspace = false
+                    trustMessage = "Failed: \(error.localizedDescription)"
+                }
+            }
         }
     }
 
@@ -957,6 +1514,10 @@ struct ChatDetailView: View {
                         onSessionUpdated?(newSid)
                     }
                     let content = (res.output ?? "") + (res.error.map { "\n\nError: \($0)" } ?? "")
+                    let combined = (res.output ?? "") + (res.error ?? "")
+                    if combined.lowercased().contains("trust") {
+                        showTrustAlert = true
+                    }
                     if !content.isEmpty {
                         let assistantMsg = ChatMessage(
                             id: UUID().uuidString,
@@ -980,6 +1541,9 @@ struct ChatDetailView: View {
                     streamingBuffer = ""
                     streamingContent = ""
                     loading = false
+                    if error.localizedDescription.lowercased().contains("trust") {
+                        showTrustAlert = true
+                    }
                     let errMsg = ChatMessage(
                         id: UUID().uuidString,
                         conversationId: conversation.id,
