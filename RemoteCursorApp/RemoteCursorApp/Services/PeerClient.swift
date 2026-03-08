@@ -48,6 +48,36 @@ final class PeerClient: NSObject, ObservableObject, MCSessionDelegate, MCNearbyS
         try await sendRequest(type: "getRepos", params: [:], key: "repos") as! [String]
     }
 
+    func listFiles(path: String) async throws -> [FileItem] {
+        let dict = try await sendRequest(type: "listFiles", params: ["path": path], key: nil) as? [String: Any]
+        guard let files = dict?["files"] as? [[String: Any]] else {
+            throw NSError(domain: "PeerClient", code: -1, userInfo: [NSLocalizedDescriptionKey: dict?["error"] as? String ?? "Invalid response"])
+        }
+        return files.map {
+            FileItem(
+                id: $0["path"] as? String ?? UUID().uuidString,
+                name: $0["name"] as? String ?? "",
+                path: $0["path"] as? String ?? "",
+                isDirectory: $0["isDirectory"] as? Bool ?? false,
+                size: $0["size"] as? Int
+            )
+        }
+    }
+
+    func readFile(path: String) async throws -> String {
+        let dict = try await sendRequest(type: "readFile", params: ["path": path], key: nil) as? [String: Any]
+        if let error = dict?["error"] as? String { throw NSError(domain: "PeerClient", code: -1, userInfo: [NSLocalizedDescriptionKey: error]) }
+        guard let content = dict?["content"] as? String else {
+            throw NSError(domain: "PeerClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "No content"])
+        }
+        return content
+    }
+
+    func writeFile(path: String, content: String) async throws {
+        let dict = try await sendRequest(type: "writeFile", params: ["path": path, "content": content], key: nil) as? [String: Any]
+        if let error = dict?["error"] as? String { throw NSError(domain: "PeerClient", code: -1, userInfo: [NSLocalizedDescriptionKey: error]) }
+    }
+
     func runCommand(_ command: String, workspace: String?) async throws -> CommandResult {
         var params: [String: Any] = ["command": command]
         if let w = workspace { params["workspace"] = w }
@@ -57,6 +87,18 @@ final class PeerClient: NSObject, ObservableObject, MCSessionDelegate, MCNearbyS
             stderr: dict?["stderr"] as? String,
             exitCode: (dict?["exitCode"] as? Int) ?? -1
         )
+    }
+
+    func uploadImage(_ imageData: Data) async throws -> String {
+        let b64 = imageData.base64EncodedString()
+        let dict = try await sendRequest(type: "uploadImage", params: ["data": b64], key: nil) as? [String: Any]
+        if let error = dict?["error"] as? String {
+            throw NSError(domain: "PeerClient", code: -1, userInfo: [NSLocalizedDescriptionKey: error])
+        }
+        guard let path = dict?["path"] as? String else {
+            throw NSError(domain: "PeerClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "No path returned"])
+        }
+        return path
     }
 
     func runAgent(workspace: String, message: String, sessionId: String? = nil) async throws -> AgentResponse {

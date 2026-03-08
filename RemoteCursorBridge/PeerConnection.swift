@@ -57,6 +57,30 @@ final class PeerConnection: NSObject {
             }
             let workspace = json["workspace"] as? String
             response = HTTPServer.runShellCommand(command, workspace: workspace)
+        case "listFiles":
+            guard let path = json["path"] as? String else {
+                response = ["error": "Missing path"]
+                break
+            }
+            response = HTTPServer.listFiles(at: path)
+        case "readFile":
+            guard let path = json["path"] as? String else {
+                response = ["error": "Missing path"]
+                break
+            }
+            response = HTTPServer.readFile(at: path)
+        case "writeFile":
+            guard let path = json["path"] as? String, let content = json["content"] as? String else {
+                response = ["error": "Missing path or content"]
+                break
+            }
+            response = HTTPServer.writeFile(at: path, content: content)
+        case "uploadImage":
+            guard let b64 = json["data"] as? String, let imageData = Data(base64Encoded: b64), !imageData.isEmpty else {
+                response = ["error": "Missing or invalid image data"]
+                break
+            }
+            response = HTTPServer.saveUploadedImage(imageData)
         default:
             response = ["error": "Unknown request type"]
         }

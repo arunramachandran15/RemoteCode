@@ -19,6 +19,10 @@
 		B1000010 /* ChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000010 /* ChatStore.swift */; };
 		B1000011 /* MarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000011 /* MarkdownView.swift */; };
 		B1000012 /* TerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000012 /* TerminalView.swift */; };
+		B1000013 /* SpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000013 /* SpeechRecognizer.swift */; };
+		B1000014 /* FileBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000014 /* FileBrowserView.swift */; };
+		B1000015 /* CodeViewerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000015 /* CodeViewerView.swift */; };
+		B1000016 /* ImagePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000016 /* ImagePicker.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -35,6 +39,10 @@
 		B2000010 /* ChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStore.swift; sourceTree = "<group>"; };
 		B2000011 /* MarkdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownView.swift; sourceTree = "<group>"; };
 		B2000012 /* TerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalView.swift; sourceTree = "<group>"; };
+		B2000013 /* SpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizer.swift; sourceTree = "<group>"; };
+		B2000014 /* FileBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileBrowserView.swift; sourceTree = "<group>"; };
+		B2000015 /* CodeViewerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeViewerView.swift; sourceTree = "<group>"; };
+		B2000016 /* ImagePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePicker.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -69,6 +77,10 @@
 				B2000010 /* ChatStore.swift */,
 				B2000011 /* MarkdownView.swift */,
 				B2000012 /* TerminalView.swift */,
+				B2000013 /* SpeechRecognizer.swift */,
+				B2000014 /* FileBrowserView.swift */,
+				B2000015 /* CodeViewerView.swift */,
+				B2000016 /* ImagePicker.swift */,
 				B5000004 /* Services */,
 				B2000008 /* Assets.xcassets */,
 			);
@@ -177,6 +189,10 @@
 				B1000010 /* ChatStore.swift in Sources */,
 				B1000011 /* MarkdownView.swift in Sources */,
 				B1000012 /* TerminalView.swift in Sources */,
+				B1000013 /* SpeechRecognizer.swift in Sources */,
+				B1000014 /* FileBrowserView.swift in Sources */,
+				B1000015 /* CodeViewerView.swift in Sources */,
+				B1000016 /* ImagePicker.swift in Sources */,
 				B1000006 /* HTTPClient.swift in Sources */,
 				B1000007 /* PeerClient.swift in Sources */,
 			);

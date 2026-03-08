@@ -52,6 +52,7 @@ final class HTTPServer {
     private struct ParsedRequest {
         let method: String
         let path: String
+        let queryParams: [String: String]
         let headerLength: Int
         let bodyLength: Int?
     }
@@ -63,7 +64,18 @@ final class HTTPServer {
         let parts = first.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: false)
         guard parts.count >= 2 else { return nil }
         let method = String(parts[0])
-        let path = String(parts[1]).split(separator: "?").first.map(String.init) ?? ""
+        let rawPath = String(parts[1])
+        let pathParts = rawPath.split(separator: "?", maxSplits: 1)
+        let path = String(pathParts[0])
+        var queryParams: [String: String] = [:]
+        if pathParts.count > 1 {
+            for param in pathParts[1].split(separator: "&") {
+                let kv = param.split(separator: "=", maxSplits: 1)
+                if kv.count == 2 {
+                    queryParams[String(kv[0])] = String(kv[1]).removingPercentEncoding ?? String(kv[1])
+                }
+            }
+        }
         var headerLength = 0
         var bodyLength: Int?
         for line in lines.dropFirst() {
@@ -79,7 +91,7 @@ final class HTTPServer {
                 break
             }
         }
-        return ParsedRequest(method: method, path: path, headerLength: headerLength, bodyLength: bodyLength)
+        return ParsedRequest(method: method, path: path, queryParams: queryParams, headerLength: headerLength, bodyLength: bodyLength)
     }
 
     private func respond(conn: NWConnection, data: Data) {
@@ -117,6 +129,36 @@ final class HTTPServer {
             if let s = sid { response["sessionId"] = s }
             let json = (try? JSONSerialization.data(withJSONObject: response)) ?? Data()
             send(conn: conn, status: "200 OK", body: json, contentType: "application/json")
+        } else if req.method == "GET" && req.path == "/files" {
+            guard let dirPath = req.queryParams["path"], !dirPath.isEmpty else {
+                send(conn: conn, status: "400 Bad Request", body: "{\"error\":\"Missing path\"}", contentType: "application/json")
+                conn.cancel()
+                return
+            }
+            let result = Self.listFiles(at: dirPath)
+            let json = (try? JSONSerialization.data(withJSONObject: result)) ?? Data()
+            send(conn: conn, status: "200 OK", body: json, contentType: "application/json")
+        } else if req.method == "GET" && req.path == "/file" {
+            guard let filePath = req.queryParams["path"], !filePath.isEmpty else {
+                send(conn: conn, status: "400 Bad Request", body: "{\"error\":\"Missing path\"}", contentType: "application/json")
+                conn.cancel()
+                return
+            }
+            let result = Self.readFile(at: filePath)
+            let json = (try? JSONSerialization.data(withJSONObject: result)) ?? Data()
+            send(conn: conn, status: "200 OK", body: json, contentType: "application/json")
+        } else if req.method == "POST" && req.path == "/file" {
+            guard let str = bodyStr,
+                  let obj = try? JSONSerialization.jsonObject(with: Data(str.utf8)) as? [String: Any],
+                  let filePath = obj["path"] as? String,
+                  let content = obj["content"] as? String else {
+                send(conn: conn, status: "400 Bad Request", body: "{\"error\":\"Missing path or content\"}", contentType: "application/json")
+                conn.cancel()
+                return
+            }
+            let result = Self.writeFile(at: filePath, content: content)
+            let json = (try? JSONSerialization.data(withJSONObject: result)) ?? Data()
+            send(conn: conn, status: "200 OK", body: json, contentType: "application/json")
         } else if req.method == "POST" && req.path == "/run" {
             guard let str = bodyStr,
                   let obj = try? JSONSerialization.jsonObject(with: Data(str.utf8)) as? [String: Any],
@@ -127,6 +169,24 @@ final class HTTPServer {
             }
             let workspace = obj["workspace"] as? String
             let result = Self.runShellCommand(command, workspace: workspace)
+            let json = (try? JSONSerialization.data(withJSONObject: result)) ?? Data()
+            send(conn: conn, status: "200 OK", body: json, contentType: "application/json")
+        } else if req.method == "POST" && req.path == "/upload-image" {
+            let imageData: Data
+            if let str = bodyStr,
+               let obj = try? JSONSerialization.jsonObject(with: Data(str.utf8)) as? [String: Any],
+               let b64 = obj["data"] as? String,
+               let decoded = Data(base64Encoded: b64) {
+                imageData = decoded
+            } else {
+                imageData = body
+            }
+            guard !imageData.isEmpty else {
+                send(conn: conn, status: "400 Bad Request", body: "{\"error\":\"No image data\"}", contentType: "application/json")
+                conn.cancel()
+                return
+            }
+            let result = Self.saveUploadedImage(imageData)
             let json = (try? JSONSerialization.data(withJSONObject: result)) ?? Data()
             send(conn: conn, status: "200 OK", body: json, contentType: "application/json")
         } else if req.method == "GET" && req.path == "/health" {
@@ -148,6 +208,64 @@ final class HTTPServer {
 
     private func send(conn: NWConnection, status: String, body: String, contentType: String? = nil) {
         send(conn: conn, status: status, body: Data(body.utf8), contentType: contentType)
+    }
+
+    static func listFiles(at path: String) -> [String: Any] {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else {
+            return ["error": "Not a directory", "files": []]
+        }
+        guard let entries = try? fm.contentsOfDirectory(atPath: path) else {
+            return ["error": "Cannot read directory", "files": []]
+        }
+        var files: [[String: Any]] = []
+        for name in entries.sorted() {
+            if name.hasPrefix(".") { continue }
+            let full = (path as NSString).appendingPathComponent(name)
+            var entryIsDir: ObjCBool = false
+            fm.fileExists(atPath: full, isDirectory: &entryIsDir)
+            var entry: [String: Any] = ["name": name, "path": full, "isDirectory": entryIsDir.boolValue]
+            if !entryIsDir.boolValue, let attrs = try? fm.attributesOfItem(atPath: full) {
+                entry["size"] = (attrs[.size] as? Int) ?? 0
+            }
+            files.append(entry)
+        }
+        return ["files": files]
+    }
+
+    static func readFile(at path: String) -> [String: Any] {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: path) else {
+            return ["error": "File not found"]
+        }
+        guard let data = fm.contents(atPath: path),
+              let content = String(data: data, encoding: .utf8) else {
+            return ["error": "Cannot read file (binary or encoding issue)"]
+        }
+        return ["content": content, "path": path]
+    }
+
+    static func writeFile(at path: String, content: String) -> [String: Any] {
+        do {
+            try content.write(toFile: path, atomically: true, encoding: .utf8)
+            return ["ok": true]
+        } catch {
+            return ["error": error.localizedDescription]
+        }
+    }
+
+    static func saveUploadedImage(_ data: Data) -> [String: Any] {
+        let tmpDir = NSTemporaryDirectory() + "remotecursor_images/"
+        try? FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
+        let filename = "img_\(Int(Date().timeIntervalSince1970))_\(Int.random(in: 1000...9999)).png"
+        let path = tmpDir + filename
+        do {
+            try data.write(to: URL(fileURLWithPath: path))
+            return ["path": path, "ok": true]
+        } catch {
+            return ["error": error.localizedDescription]
+        }
     }
 
     static func runShellCommand(_ command: String, workspace: String?) -> [String: Any] {

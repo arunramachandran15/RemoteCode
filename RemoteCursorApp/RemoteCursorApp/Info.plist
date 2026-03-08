@@ -27,6 +27,28 @@
 		<string>_remotecursor._tcp</string>
 	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Remote Cursor uses Bluetooth to discover and connect to your Mac when you choose “Find Mac”.</string>
+	<string>Remote Cursor uses Bluetooth to discover and connect to your Mac when you choose "Find Mac".</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
+	<key>UIRequiresFullScreen</key>
+	<false/>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Remote Cursor uses speech recognition to transcribe your voice into messages for the coding agent.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Remote Cursor needs microphone access to capture your voice for speech-to-text input.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Remote Cursor uses the camera to take photos of errors or UI for the coding agent to review.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Remote Cursor needs photo library access to attach screenshots or images to send to the coding agent.</string>
 </dict>
 </plist>

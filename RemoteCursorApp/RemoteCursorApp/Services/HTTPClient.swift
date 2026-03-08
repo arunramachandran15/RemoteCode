@@ -82,6 +82,49 @@ final class HTTPClient {
         return AgentResponse(output: output.isEmpty ? nil : output, error: errorMsg, sessionId: sessionIdResult)
     }
 
+    func listFiles(path: String) async throws -> [FileItem] {
+        var comps = URLComponents(string: baseURL + "/files")!
+        comps.queryItems = [URLQueryItem(name: "path", value: path)]
+        let (data, _) = try await URLSession.shared.data(from: comps.url!)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let files = json?["files"] as? [[String: Any]] else {
+            throw NSError(domain: "HTTPClient", code: -1, userInfo: [NSLocalizedDescriptionKey: json?["error"] as? String ?? "Invalid response"])
+        }
+        return files.map {
+            FileItem(
+                id: $0["path"] as? String ?? UUID().uuidString,
+                name: $0["name"] as? String ?? "",
+                path: $0["path"] as? String ?? "",
+                isDirectory: $0["isDirectory"] as? Bool ?? false,
+                size: $0["size"] as? Int
+            )
+        }
+    }
+
+    func readFile(path: String) async throws -> String {
+        var comps = URLComponents(string: baseURL + "/file")!
+        comps.queryItems = [URLQueryItem(name: "path", value: path)]
+        let (data, _) = try await URLSession.shared.data(from: comps.url!)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if let error = json?["error"] as? String { throw NSError(domain: "HTTPClient", code: -1, userInfo: [NSLocalizedDescriptionKey: error]) }
+        guard let content = json?["content"] as? String else {
+            throw NSError(domain: "HTTPClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "No content"])
+        }
+        return content
+    }
+
+    func writeFile(path: String, content: String) async throws {
+        let url = URL(string: baseURL + "/file")!
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["path": path, "content": content])
+        req.timeoutInterval = 30
+        let (data, _) = try await URLSession.shared.data(for: req)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if let error = json?["error"] as? String { throw NSError(domain: "HTTPClient", code: -1, userInfo: [NSLocalizedDescriptionKey: error]) }
+    }
+
     func runCommand(_ command: String, workspace: String?) async throws -> CommandResult {
         let url = URL(string: baseURL + "/run")!
         var req = URLRequest(url: url)
@@ -98,6 +141,25 @@ final class HTTPClient {
             stderr: json?["stderr"] as? String,
             exitCode: (json?["exitCode"] as? Int) ?? -1
         )
+    }
+
+    func uploadImage(_ imageData: Data) async throws -> String {
+        let url = URL(string: baseURL + "/upload-image")!
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 60
+        let b64 = imageData.base64EncodedString()
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["data": b64])
+        let (data, _) = try await URLSession.shared.data(for: req)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if let error = json?["error"] as? String {
+            throw NSError(domain: "HTTPClient", code: -1, userInfo: [NSLocalizedDescriptionKey: error])
+        }
+        guard let path = json?["path"] as? String else {
+            throw NSError(domain: "HTTPClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "No path returned"])
+        }
+        return path
     }
 
     func healthCheck() async -> Bool {

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var peer = PeerClient()
     @AppStorage("wifiURL") private var wifiURL = ""
     @AppStorage("savedConnectionMode") private var savedConnectionMode = ""
@@ -12,64 +13,15 @@ struct ContentView: View {
     @State private var wifiReconnectTask: Task<Void, Never>?
     @State private var terminalToAgentMessage = ""
     @State private var selectedTab = 0
+    @State private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     var body: some View {
         Group {
             if isConnected {
-                TabView(selection: $selectedTab) {
-                    NavigationStack {
-                        AgentView(
-                            peer: peer,
-                            wifiURL: wifiURL,
-                            connectionMode: connectionMode ?? .wifi,
-                            onConnectionLost: { triggerReconnect() },
-                            externalMessage: $terminalToAgentMessage
-                        )
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("Disconnect") { disconnect() }
-                            }
-                        }
-                    }
-                    .tabItem {
-                        Label("Agent", systemImage: "brain")
-                    }
-                    .tag(0)
-
-                    NavigationStack {
-                        TerminalView(
-                            peer: peer,
-                            wifiURL: wifiURL,
-                            connectionMode: connectionMode ?? .wifi,
-                            sendToAgent: Binding(
-                                get: { terminalToAgentMessage },
-                                set: { newValue in
-                                    terminalToAgentMessage = newValue
-                                    if !newValue.isEmpty { selectedTab = 0 }
-                                }
-                            )
-                        )
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("Disconnect") { disconnect() }
-                            }
-                        }
-                    }
-                    .tabItem {
-                        Label("Terminal", systemImage: "terminal")
-                    }
-                    .tag(1)
-                }
-                .overlay {
-                    if isReconnecting {
-                        VStack {
-                            ProgressView("Reconnecting…")
-                                .padding()
-                            Spacer()
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(.ultraThinMaterial)
-                    }
+                if horizontalSizeClass == .regular {
+                    iPadLayout
+                } else {
+                    iPhoneLayout
                 }
             } else {
                 ConnectionView(
@@ -96,15 +48,179 @@ struct ContentView: View {
             }
         }
         .onChange(of: scenePhase) { phase in
-            if phase == .active {
+            switch phase {
+            case .active:
+                endBackgroundTask()
                 if isReconnecting { return }
                 if !isConnected, !savedConnectionMode.isEmpty { tryAutoConnect() }
-            } else if phase == .background {
-                wifiReconnectTask?.cancel()
-                wifiReconnectTask = nil
+            case .background:
+                beginBackgroundTask()
+            default:
+                break
             }
         }
     }
+
+    // MARK: - iPhone Tab Layout
+
+    private var iPhoneLayout: some View {
+        TabView(selection: $selectedTab) {
+            NavigationStack {
+                AgentView(
+                    peer: peer,
+                    wifiURL: wifiURL,
+                    connectionMode: connectionMode ?? .wifi,
+                    onConnectionLost: { triggerReconnect() },
+                    externalMessage: $terminalToAgentMessage
+                )
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Disconnect") { disconnect() }
+                    }
+                }
+            }
+            .tabItem {
+                Label("Agent", systemImage: "brain")
+            }
+            .tag(0)
+
+            NavigationStack {
+                TerminalView(
+                    peer: peer,
+                    wifiURL: wifiURL,
+                    connectionMode: connectionMode ?? .wifi,
+                    sendToAgent: Binding(
+                        get: { terminalToAgentMessage },
+                        set: { newValue in
+                            terminalToAgentMessage = newValue
+                            if !newValue.isEmpty { selectedTab = 0 }
+                        }
+                    )
+                )
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Disconnect") { disconnect() }
+                    }
+                }
+            }
+            .tabItem {
+                Label("Terminal", systemImage: "terminal")
+            }
+            .tag(1)
+
+            NavigationStack {
+                FileBrowserView(
+                    peer: peer,
+                    wifiURL: wifiURL,
+                    connectionMode: connectionMode ?? .wifi
+                )
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Disconnect") { disconnect() }
+                    }
+                }
+            }
+            .tabItem {
+                Label("Files", systemImage: "folder")
+            }
+            .tag(2)
+        }
+        .overlay {
+            if isReconnecting { reconnectingOverlay }
+        }
+    }
+
+    // MARK: - iPad Split Layout
+
+    private var iPadLayout: some View {
+        NavigationSplitView {
+            List {
+                sidebarButton(label: "Agent", icon: "brain", tag: 0)
+                sidebarButton(label: "Terminal", icon: "terminal", tag: 1)
+                sidebarButton(label: "Files", icon: "folder", tag: 2)
+            }
+            .navigationTitle("Remote Cursor")
+            .toolbar {
+                ToolbarItem(placement: .bottomBar) {
+                    Button("Disconnect") { disconnect() }
+                        .foregroundStyle(.red)
+                }
+            }
+        } detail: {
+            NavigationStack {
+                switch selectedTab {
+                case 1:
+                    TerminalView(
+                        peer: peer,
+                        wifiURL: wifiURL,
+                        connectionMode: connectionMode ?? .wifi,
+                        sendToAgent: Binding(
+                            get: { terminalToAgentMessage },
+                            set: { newValue in
+                                terminalToAgentMessage = newValue
+                                if !newValue.isEmpty { selectedTab = 0 }
+                            }
+                        )
+                    )
+                case 2:
+                    FileBrowserView(
+                        peer: peer,
+                        wifiURL: wifiURL,
+                        connectionMode: connectionMode ?? .wifi
+                    )
+                default:
+                    AgentView(
+                        peer: peer,
+                        wifiURL: wifiURL,
+                        connectionMode: connectionMode ?? .wifi,
+                        onConnectionLost: { triggerReconnect() },
+                        externalMessage: $terminalToAgentMessage
+                    )
+                }
+            }
+        }
+        .overlay {
+            if isReconnecting { reconnectingOverlay }
+        }
+    }
+
+    private func sidebarButton(label: String, icon: String, tag: Int) -> some View {
+        Button {
+            selectedTab = tag
+        } label: {
+            Label(label, systemImage: icon)
+                .foregroundStyle(selectedTab == tag ? Color.accentColor : Color.primary)
+        }
+    }
+
+    // MARK: - Shared Views
+
+    private var reconnectingOverlay: some View {
+        VStack {
+            ProgressView("Reconnecting…")
+                .padding()
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.ultraThinMaterial)
+    }
+
+    // MARK: - Background Task Management
+
+    private func beginBackgroundTask() {
+        guard backgroundTask == .invalid else { return }
+        backgroundTask = UIApplication.shared.beginBackgroundTask {
+            endBackgroundTask()
+        }
+    }
+
+    private func endBackgroundTask() {
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
+    }
+
+    // MARK: - Connection
 
     private func tryAutoConnect() {
         guard !isConnected else { return }

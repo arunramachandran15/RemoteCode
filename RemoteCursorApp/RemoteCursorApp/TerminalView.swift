@@ -4,11 +4,12 @@ struct TerminalView: View {
     @ObservedObject var peer: PeerClient
     let wifiURL: String
     let connectionMode: ConnectionMode?
-    /// Set this to send terminal output to the Agent tab.
     @Binding var sendToAgent: String
     @State private var command = ""
     @State private var history: [TerminalEntry] = []
     @State private var running = false
+    @State private var commandSuggestions: [String] = []
+    @State private var showSuggestions = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -43,11 +44,39 @@ struct TerminalView: View {
 
             Divider()
 
+            if showSuggestions && !commandSuggestions.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(commandSuggestions, id: \.self) { suggestion in
+                            Button {
+                                command = suggestion
+                                showSuggestions = false
+                            } label: {
+                                Text(suggestion)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(Color(.systemGray5))
+                                    .cornerRadius(6)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 6)
+                }
+                .background(Color(.systemGray6))
+            }
+
             HStack(spacing: 8) {
                 TextField("Enter command…", text: $command, axis: .vertical)
                     .lineLimit(1...4)
                     .font(.system(.body, design: .monospaced))
                     .textFieldStyle(.roundedBorder)
+                    .onChange(of: command) { newValue in
+                        updateSuggestions(for: newValue)
+                    }
 
                 Button {
                     runCommand()
@@ -67,10 +96,14 @@ struct TerminalView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .destructiveAction) {
-                Button("Clear") { history.removeAll() }
-                    .disabled(history.isEmpty)
+                Button("Clear") {
+                    history.removeAll()
+                    TerminalHistoryStore.shared.clearAll()
+                }
+                .disabled(history.isEmpty)
             }
         }
+        .onAppear { loadHistory() }
     }
 
     @ViewBuilder
@@ -84,6 +117,12 @@ struct TerminalView: View {
                     .font(.system(.callout, design: .monospaced))
                     .textSelection(.enabled)
                 Spacer()
+                Button {
+                    command = entry.command
+                } label: {
+                    Image(systemName: "arrow.counterclockwise").font(.caption)
+                }
+                .buttonStyle(.borderless)
                 Button {
                     UIPasteboard.general.string = entry.command
                 } label: {
@@ -168,12 +207,33 @@ struct TerminalView: View {
         return s
     }
 
+    private func updateSuggestions(for text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty {
+            showSuggestions = false
+            return
+        }
+        let past = TerminalHistoryStore.shared.recentCommands(limit: 50)
+        commandSuggestions = past
+            .filter { $0.lowercased().contains(trimmed.lowercased()) && $0 != trimmed }
+            .uniqued()
+            .prefix(5)
+            .map { $0 }
+        showSuggestions = !commandSuggestions.isEmpty
+    }
+
+    private func loadHistory() {
+        history = TerminalHistoryStore.shared.loadAll()
+    }
+
     private func runCommand() {
         let cmd = command.trimmingCharacters(in: .whitespaces)
         guard !cmd.isEmpty else { return }
         command = ""
+        showSuggestions = false
         let entry = TerminalEntry(command: cmd, result: nil)
         history.append(entry)
+        TerminalHistoryStore.shared.insert(entry)
         running = true
 
         Task {
@@ -188,13 +248,16 @@ struct TerminalView: View {
                 await MainActor.run {
                     if let idx = history.firstIndex(where: { $0.id == entry.id }) {
                         history[idx].result = result
+                        TerminalHistoryStore.shared.updateResult(id: entry.id, result: result)
                     }
                     running = false
                 }
             } catch {
                 await MainActor.run {
+                    let errResult = CommandResult(stdout: nil, stderr: error.localizedDescription, exitCode: -1)
                     if let idx = history.firstIndex(where: { $0.id == entry.id }) {
-                        history[idx].result = CommandResult(stdout: nil, stderr: error.localizedDescription, exitCode: -1)
+                        history[idx].result = errResult
+                        TerminalHistoryStore.shared.updateResult(id: entry.id, result: errResult)
                     }
                     running = false
                 }
@@ -204,7 +267,135 @@ struct TerminalView: View {
 }
 
 struct TerminalEntry: Identifiable {
-    let id = UUID().uuidString
+    let id: String
     let command: String
     var result: CommandResult?
+
+    init(id: String = UUID().uuidString, command: String, result: CommandResult? = nil) {
+        self.id = id
+        self.command = command
+        self.result = result
+    }
+}
+
+private extension Array where Element: Hashable {
+    func uniqued() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
+    }
+}
+
+// MARK: - Persistent Terminal History (SQLite)
+
+import SQLite3
+
+final class TerminalHistoryStore {
+    static let shared = TerminalHistoryStore()
+    private var db: OpaquePointer?
+    private let queue = DispatchQueue(label: "terminalhistory.db")
+    private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: (@convention(c) (UnsafeMutableRawPointer?) -> Void).self)
+
+    private init() {
+        queue.sync { open() }
+    }
+
+    private var dbPath: String {
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return dir.appendingPathComponent("terminal_history.sqlite").path
+    }
+
+    private func open() {
+        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil) == SQLITE_OK else { return }
+        let sql = """
+        CREATE TABLE IF NOT EXISTS terminal_history (
+            id TEXT PRIMARY KEY,
+            command TEXT NOT NULL,
+            stdout TEXT,
+            stderr TEXT,
+            exit_code INTEGER,
+            created_at REAL NOT NULL
+        );
+        """
+        var err: UnsafeMutablePointer<CChar>?
+        sqlite3_exec(db, sql, nil, nil, &err)
+        if let e = err { sqlite3_free(e) }
+    }
+
+    func insert(_ entry: TerminalEntry) {
+        queue.async { [weak self] in
+            guard let self = self, let db = self.db else { return }
+            let sql = "INSERT OR REPLACE INTO terminal_history (id, command, created_at) VALUES (?, ?, ?);"
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            defer { sqlite3_finalize(stmt) }
+            entry.id.withCString { sqlite3_bind_text(stmt, 1, $0, -1, self.SQLITE_TRANSIENT) }
+            entry.command.withCString { sqlite3_bind_text(stmt, 2, $0, -1, self.SQLITE_TRANSIENT) }
+            sqlite3_bind_double(stmt, 3, Date().timeIntervalSince1970)
+            sqlite3_step(stmt)
+        }
+    }
+
+    func updateResult(id: String, result: CommandResult) {
+        queue.async { [weak self] in
+            guard let self = self, let db = self.db else { return }
+            let sql = "UPDATE terminal_history SET stdout = ?, stderr = ?, exit_code = ? WHERE id = ?;"
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            defer { sqlite3_finalize(stmt) }
+            if let out = result.stdout { out.withCString { sqlite3_bind_text(stmt, 1, $0, -1, self.SQLITE_TRANSIENT) } }
+            else { sqlite3_bind_null(stmt, 1) }
+            if let err = result.stderr { err.withCString { sqlite3_bind_text(stmt, 2, $0, -1, self.SQLITE_TRANSIENT) } }
+            else { sqlite3_bind_null(stmt, 2) }
+            sqlite3_bind_int(stmt, 3, Int32(result.exitCode))
+            id.withCString { sqlite3_bind_text(stmt, 4, $0, -1, self.SQLITE_TRANSIENT) }
+            sqlite3_step(stmt)
+        }
+    }
+
+    func loadAll() -> [TerminalEntry] {
+        queue.sync {
+            guard let db = self.db else { return [] }
+            let sql = "SELECT id, command, stdout, stderr, exit_code FROM terminal_history ORDER BY created_at ASC LIMIT 200;"
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            var entries: [TerminalEntry] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let id = String(cString: sqlite3_column_text(stmt, 0))
+                let cmd = String(cString: sqlite3_column_text(stmt, 1))
+                let stdout = sqlite3_column_text(stmt, 2).map { String(cString: $0) }
+                let stderr = sqlite3_column_text(stmt, 3).map { String(cString: $0) }
+                let exitCode = sqlite3_column_type(stmt, 4) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 4)) : nil
+                var result: CommandResult?
+                if exitCode != nil {
+                    result = CommandResult(stdout: stdout, stderr: stderr, exitCode: exitCode!)
+                }
+                entries.append(TerminalEntry(id: id, command: cmd, result: result))
+            }
+            return entries
+        }
+    }
+
+    func recentCommands(limit: Int) -> [String] {
+        queue.sync {
+            guard let db = self.db else { return [] }
+            let sql = "SELECT DISTINCT command FROM terminal_history ORDER BY created_at DESC LIMIT ?;"
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int(stmt, 1, Int32(limit))
+            var cmds: [String] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                cmds.append(String(cString: sqlite3_column_text(stmt, 0)))
+            }
+            return cmds
+        }
+    }
+
+    func clearAll() {
+        queue.async { [weak self] in
+            guard let db = self?.db else { return }
+            sqlite3_exec(db, "DELETE FROM terminal_history;", nil, nil, nil)
+        }
+    }
 }
