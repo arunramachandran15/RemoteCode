@@ -31,58 +31,59 @@ final class PeerConnection: NSObject {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = json["type"] as? String else { return }
 
-        var response: [String: Any]
+        let requestId = json["requestId"] as? String ?? UUID().uuidString
+        var response: [String: Any] = ["requestId": requestId]
         switch type {
         case "getRepos":
-            response = ["repos": Config.repoPaths]
+            response["repos"] = Config.repoPaths
         case "runAgent":
             guard let workspace = json["workspace"] as? String, let message = json["message"] as? String else {
-                response = ["error": "Missing workspace or message"]
+                response["error"] = "Missing workspace or message"
                 break
             }
             let sessionId = json["sessionId"] as? String
             let stream = (json["stream"] as? Bool) == true
-            let requestId = json["requestId"] as? String ?? UUID().uuidString
             if stream {
                 sendAgentStream(workspace: workspace, message: message, sessionId: sessionId, requestId: requestId, to: peerID, session: session)
                 return
             }
             let (output, error, sid) = AgentRunner.run(workspace: workspace, message: message, sessionId: sessionId)
-            response = ["output": output as Any, "error": error as Any]
+            response["output"] = output as Any
+            response["error"] = error as Any
             if let s = sid { response["sessionId"] = s }
         case "runCommand":
             guard let command = json["command"] as? String else {
-                response = ["error": "Missing command"]
+                response["error"] = "Missing command"
                 break
             }
             let workspace = json["workspace"] as? String
-            response = HTTPServer.runShellCommand(command, workspace: workspace)
+            let result = HTTPServer.runShellCommand(command, workspace: workspace)
+            for (k, v) in result { response[k] = v }
         case "listFiles":
             guard let path = json["path"] as? String else {
-                response = ["error": "Missing path"]
+                response["error"] = "Missing path"
                 break
             }
-            response = HTTPServer.listFiles(at: path)
+            let result = HTTPServer.listFiles(at: path)
+            for (k, v) in result { response[k] = v }
         case "readFile":
             guard let path = json["path"] as? String else {
-                response = ["error": "Missing path"]
+                response["error"] = "Missing path"
                 break
             }
-            response = HTTPServer.readFile(at: path)
+            let result = HTTPServer.readFile(at: path)
+            for (k, v) in result { response[k] = v }
         case "writeFile":
             guard let path = json["path"] as? String, let content = json["content"] as? String else {
-                response = ["error": "Missing path or content"]
+                response["error"] = "Missing path or content"
                 break
             }
-            response = HTTPServer.writeFile(at: path, content: content)
+            let result = HTTPServer.writeFile(at: path, content: content)
+            for (k, v) in result { response[k] = v }
         case "uploadImage":
-            guard let b64 = json["data"] as? String, let imageData = Data(base64Encoded: b64), !imageData.isEmpty else {
-                response = ["error": "Missing or invalid image data"]
-                break
-            }
-            response = HTTPServer.saveUploadedImage(imageData)
+            response["error"] = "Use resource transfer for image uploads"
         default:
-            response = ["error": "Unknown request type"]
+            response["error"] = "Unknown request type"
         }
 
         guard let responseData = try? JSONSerialization.data(withJSONObject: response) else { return }
@@ -130,5 +131,24 @@ extension PeerConnection: MCSessionDelegate {
 
     func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {}
     func session(_ session: MCSession, didStartReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, with progress: Progress) {}
-    func session(_ session: MCSession, didFinishReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, at localURL: URL?, withError error: Error?) {}
+    func session(_ session: MCSession, didFinishReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, at localURL: URL?, withError error: Error?) {
+        guard resourceName.hasPrefix("uploadImage:") else { return }
+        let requestId = String(resourceName.dropFirst("uploadImage:".count))
+        var response: [String: Any] = ["type": "uploadImage_response", "requestId": requestId]
+        if let error = error {
+            response["error"] = error.localizedDescription
+        } else if let url = localURL, let imageData = try? Data(contentsOf: url) {
+            let result = HTTPServer.saveUploadedImage(imageData)
+            if let path = result["path"] as? String {
+                response["path"] = path
+            } else {
+                response["error"] = result["error"] as? String ?? "Failed to save image"
+            }
+        } else {
+            response["error"] = "No image data received"
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: response),
+              session.connectedPeers.contains(peerID) else { return }
+        try? session.send(data, toPeers: [peerID], with: .reliable)
+    }
 }

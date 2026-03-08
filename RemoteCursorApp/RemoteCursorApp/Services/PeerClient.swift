@@ -90,16 +90,33 @@ final class PeerClient: NSObject, ObservableObject, MCSessionDelegate, MCNearbyS
     }
 
     func uploadImage(_ imageData: Data) async throws -> String {
-        let b64 = imageData.base64EncodedString()
-        let dict = try await sendRequest(type: "uploadImage", params: ["data": b64], key: nil) as? [String: Any]
-        if let error = dict?["error"] as? String {
-            throw NSError(domain: "PeerClient", code: -1, userInfo: [NSLocalizedDescriptionKey: error])
+        guard let sess = session, !sess.connectedPeers.isEmpty else {
+            throw NSError(domain: "PeerClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Not connected"])
         }
-        guard let path = dict?["path"] as? String else {
-            throw NSError(domain: "PeerClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "No path returned"])
+        let requestId = UUID().uuidString
+        let tmpURL = FileManager.default.temporaryDirectory.appendingPathComponent("upload_\(requestId).jpg")
+        try imageData.write(to: tmpURL)
+        defer { try? FileManager.default.removeItem(at: tmpURL) }
+
+        return try await withCheckedThrowingContinuation { cont in
+            pendingResourceContinuations[requestId] = cont
+            sess.sendResource(at: tmpURL, withName: "uploadImage:\(requestId)", toPeer: sess.connectedPeers[0]) { error in
+                if let error = error {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.pendingResourceContinuations.removeValue(forKey: requestId)?.resume(throwing: error)
+                    }
+                }
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
+                if let c = self.pendingResourceContinuations.removeValue(forKey: requestId) {
+                    c.resume(throwing: NSError(domain: "PeerClient", code: -2, userInfo: [NSLocalizedDescriptionKey: "Image upload timeout"]))
+                }
+            }
         }
-        return path
     }
+
+    private var pendingResourceContinuations: [String: CheckedContinuation<String, Error>] = [:]
 
     func runAgent(workspace: String, message: String, sessionId: String? = nil) async throws -> AgentResponse {
         var params: [String: Any] = ["workspace": workspace, "message": message]
@@ -140,39 +157,41 @@ final class PeerClient: NSObject, ObservableObject, MCSessionDelegate, MCNearbyS
     }
 
     private var pendingStreams: [String: (onChunk: @Sendable (String) -> Void, continuation: CheckedContinuation<AgentResponse, Error>)] = [:]
-    private var pendingContinuation: (CheckedContinuation<Any, Error>)?
-    private var responseKey: String?
+    private var pendingRequests: [String: (key: String?, continuation: CheckedContinuation<Any, Error>)] = [:]
 
     private func sendRequest(type: String, params: [String: Any], key: String?) async throws -> Any {
         guard let sess = session, !sess.connectedPeers.isEmpty else {
             throw NSError(domain: "PeerClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Not connected"])
         }
-        var body: [String: Any] = ["type": type]
+        let requestId = UUID().uuidString
+        var body: [String: Any] = ["type": type, "requestId": requestId]
         for (k, v) in params { body[k] = v }
         let data = try JSONSerialization.data(withJSONObject: body)
         try sess.send(data, toPeers: sess.connectedPeers, with: .reliable)
         return try await withCheckedThrowingContinuation { cont in
-            pendingContinuation = cont
-            responseKey = key
+            pendingRequests[requestId] = (key: key, continuation: cont)
             Task {
                 try? await Task.sleep(nanoseconds: requestTimeoutNanoseconds)
-                if let c = self.pendingContinuation {
-                    self.pendingContinuation = nil
-                    self.responseKey = nil
-                    c.resume(throwing: NSError(domain: "PeerClient", code: -2, userInfo: [NSLocalizedDescriptionKey: "Timeout"]))
+                if let entry = self.pendingRequests.removeValue(forKey: requestId) {
+                    entry.continuation.resume(throwing: NSError(domain: "PeerClient", code: -2, userInfo: [NSLocalizedDescriptionKey: "Timeout"]))
                 }
             }
         }
     }
 
     func receiveResponse(_ data: Data) {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            pendingContinuation?.resume(returning: data as Any)
-            pendingContinuation = nil
-            responseKey = nil
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        let type = json["type"] as? String
+        if type == "uploadImage_response" {
+            let requestId = json["requestId"] as? String ?? ""
+            if let error = json["error"] as? String {
+                pendingResourceContinuations.removeValue(forKey: requestId)?.resume(
+                    throwing: NSError(domain: "PeerClient", code: -1, userInfo: [NSLocalizedDescriptionKey: error]))
+            } else if let path = json["path"] as? String {
+                pendingResourceContinuations.removeValue(forKey: requestId)?.resume(returning: path)
+            }
             return
         }
-        let type = json["type"] as? String
         if type == "stream_chunk" {
             let requestId = json["requestId"] as? String ?? ""
             let delta = json["delta"] as? String ?? ""
@@ -194,23 +213,20 @@ final class PeerClient: NSObject, ObservableObject, MCSessionDelegate, MCNearbyS
             }
             return
         }
-        // Single-response (getRepos, runAgent non-stream)
-        let cont = pendingContinuation
-        pendingContinuation = nil
-        let key = responseKey
-        responseKey = nil
-        guard let c = cont else { return }
-        if let k = key, let v = json[k] {
-            c.resume(returning: v)
+        let requestId = json["requestId"] as? String ?? ""
+        guard let entry = pendingRequests.removeValue(forKey: requestId) else { return }
+        if let k = entry.key, let v = json[k] {
+            entry.continuation.resume(returning: v)
         } else {
-            c.resume(returning: json)
+            entry.continuation.resume(returning: json)
         }
     }
 
     func receiveError(_ error: Error) {
-        pendingContinuation?.resume(throwing: error)
-        pendingContinuation = nil
-        responseKey = nil
+        for (_, entry) in pendingRequests { entry.continuation.resume(throwing: error) }
+        pendingRequests.removeAll()
+        for (_, cont) in pendingResourceContinuations { cont.resume(throwing: error) }
+        pendingResourceContinuations.removeAll()
         streamQueue.async { [weak self] in
             for (_, v) in self?.pendingStreams ?? [:] { v.continuation.resume(throwing: error) }
             self?.pendingStreams.removeAll()

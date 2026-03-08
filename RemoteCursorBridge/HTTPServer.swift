@@ -256,10 +256,15 @@ final class HTTPServer {
     }
 
     static func saveUploadedImage(_ data: Data) -> [String: Any] {
-        let tmpDir = NSTemporaryDirectory() + "remotecursor_images/"
-        try? FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
-        let filename = "img_\(Int(Date().timeIntervalSince1970))_\(Int.random(in: 1000...9999)).png"
-        let path = tmpDir + filename
+        let cacheDir: String
+        if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            cacheDir = caches.appendingPathComponent("remotecursor_images").path
+        } else {
+            cacheDir = NSTemporaryDirectory() + "remotecursor_images/"
+        }
+        try? FileManager.default.createDirectory(atPath: cacheDir, withIntermediateDirectories: true)
+        let filename = "img_\(Int(Date().timeIntervalSince1970))_\(Int.random(in: 1000...9999)).jpg"
+        let path = cacheDir + "/" + filename
         do {
             try data.write(to: URL(fileURLWithPath: path))
             return ["path": path, "ok": true]

@@ -356,6 +356,7 @@ struct ChatDetailView: View {
     @State private var showImageSourcePicker = false
     @State private var pendingImageData: Data?
     @State private var uploadingImage = false
+    @State private var imageUploadError: String?
 
     @State private var loadingMessages = true
     @State private var isNearBottom = true
@@ -505,6 +506,14 @@ struct ChatDetailView: View {
                 showImagePicker = true
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .alert("Image Upload Failed", isPresented: Binding(
+            get: { imageUploadError != nil },
+            set: { if !$0 { imageUploadError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(imageUploadError ?? "")
         }
     }
 
@@ -1051,7 +1060,8 @@ struct ChatDetailView: View {
             } catch {
                 await MainActor.run {
                     uploadingImage = false
-                    message = userText.isEmpty ? "[Image upload failed: \(error.localizedDescription)]" : userText
+                    if !userText.isEmpty { message = userText }
+                    imageUploadError = error.localizedDescription
                 }
             }
         }
