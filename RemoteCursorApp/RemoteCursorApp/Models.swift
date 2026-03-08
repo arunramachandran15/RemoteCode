@@ -30,3 +30,9 @@ struct ChatMessage: Identifiable {
     let content: String
     let createdAt: Date
 }
+
+struct CommandResult {
+    var stdout: String?
+    var stderr: String?
+    var exitCode: Int
+}

@@ -50,6 +50,13 @@ final class PeerConnection: NSObject {
             let (output, error, sid) = AgentRunner.run(workspace: workspace, message: message, sessionId: sessionId)
             response = ["output": output as Any, "error": error as Any]
             if let s = sid { response["sessionId"] = s }
+        case "runCommand":
+            guard let command = json["command"] as? String else {
+                response = ["error": "Missing command"]
+                break
+            }
+            let workspace = json["workspace"] as? String
+            response = HTTPServer.runShellCommand(command, workspace: workspace)
         default:
             response = ["error": "Unknown request type"]
         }

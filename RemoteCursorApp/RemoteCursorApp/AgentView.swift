@@ -7,6 +7,7 @@ struct AgentView: View {
     let wifiURL: String
     let connectionMode: ConnectionMode?
     var onConnectionLost: (() -> Void)?
+    @Binding var externalMessage: String
     @State private var repos: [RepoItem] = []
     @State private var selectedRepo: RepoItem?
     @State private var message = ""
@@ -15,7 +16,9 @@ struct AgentView: View {
     @State private var loadError: String?
     @State private var initialLoad = true
     @State private var loading = false
-    /// Per-workspace session ID for agent continuity (JSON dict persisted).
+    @State private var runningCommand: String?
+    @State private var commandResult: CommandResult?
+    @State private var showCommandResult = false
     @AppStorage(sessionStorageKey) private var sessionStorageData = "{}"
 
     private func getSessionId(workspace: String) -> String? {
@@ -46,15 +49,21 @@ struct AgentView: View {
                 }
             }
 
-            if let repo = selectedRepo {
+            if selectedRepo != nil {
                 Section("Chat history") {
                     ForEach(chatMessages) { msg in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(msg.role == .user ? "You" : "Agent")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Text(msg.content)
-                                .textSelection(.enabled)
+                            if msg.role == .assistant {
+                                MarkdownView(content: msg.content, onRunCommand: { cmd in
+                                    executeCommand(cmd)
+                                })
+                            } else {
+                                Text(msg.content)
+                                    .textSelection(.enabled)
+                            }
                         }
                         .padding(.vertical, 4)
                     }
@@ -63,8 +72,7 @@ struct AgentView: View {
                             Text("Agent")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Text(streamingContent)
-                                .textSelection(.enabled)
+                            MarkdownView(content: streamingContent)
                         }
                         .padding(.vertical, 4)
                     }
@@ -75,7 +83,7 @@ struct AgentView: View {
                 Section {
                     HStack {
                         ProgressView()
-                        Text("Running agent…")
+                        Text(runningCommand != nil ? "Running command…" : "Running agent…")
                     }
                 }
             }
@@ -83,7 +91,7 @@ struct AgentView: View {
             Section("Message to agent") {
                 TextField("Ask or command…", text: $message, axis: .vertical)
                     .lineLimit(3...8)
-                Button("Send") {
+                Button("Go") {
                     sendMessage()
                 }
                 .disabled(selectedRepo == nil || message.trimmingCharacters(in: .whitespaces).isEmpty || loading)
@@ -99,6 +107,134 @@ struct AgentView: View {
             reloadChat()
         }
         .onChange(of: selectedRepo?.path) { _ in reloadChat() }
+        .onChange(of: externalMessage) { newValue in
+            if !newValue.isEmpty {
+                message = newValue
+                externalMessage = ""
+                sendMessage()
+            }
+        }
+        .sheet(isPresented: $showCommandResult) {
+            commandResultSheet
+        }
+    }
+
+    @ViewBuilder
+    private var commandResultSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let cmd = runningCommand {
+                        Text("Command")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text(cmd)
+                            .font(.system(.callout, design: .monospaced))
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(8)
+                    }
+                    if let result = commandResult {
+                        if result.exitCode != 0 {
+                            Label("Exit code: \(result.exitCode)", systemImage: "xmark.circle")
+                                .foregroundStyle(.red)
+                                .font(.caption)
+                        } else {
+                            Label("Success", systemImage: "checkmark.circle")
+                                .foregroundStyle(.green)
+                                .font(.caption)
+                        }
+                        if let out = result.stdout, !out.isEmpty {
+                            Text("stdout")
+                                .font(.caption).foregroundStyle(.secondary)
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                Text(out)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .textSelection(.enabled)
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(8)
+                        }
+                        if let err = result.stderr, !err.isEmpty {
+                            Text("stderr")
+                                .font(.caption).foregroundStyle(.secondary)
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                Text(err)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.red)
+                                    .textSelection(.enabled)
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(8)
+                        }
+                    } else {
+                        HStack {
+                            ProgressView()
+                            Text("Running…")
+                        }
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle("Command Result")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { showCommandResult = false }
+                }
+                if commandResult != nil {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Send to Agent") {
+                            sendCommandResultToAgent()
+                            showCommandResult = false
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func executeCommand(_ command: String) {
+        runningCommand = command
+        commandResult = nil
+        showCommandResult = true
+        Task {
+            do {
+                let result: CommandResult
+                let workspace = selectedRepo?.path
+                if connectionMode == .wifi {
+                    result = try await HTTPClient(baseURL: wifiURL.trimmingCharacters(in: .whitespaces))
+                        .runCommand(command, workspace: workspace)
+                } else {
+                    result = try await peer.runCommand(command, workspace: workspace)
+                }
+                await MainActor.run { commandResult = result }
+            } catch {
+                await MainActor.run {
+                    commandResult = CommandResult(stdout: nil, stderr: error.localizedDescription, exitCode: -1)
+                }
+            }
+        }
+    }
+
+    private func sendCommandResultToAgent() {
+        guard let result = commandResult, let cmd = runningCommand else { return }
+        var output = "I ran this command on the Mac:\n```\n\(cmd)\n```\n"
+        output += "Exit code: \(result.exitCode)\n"
+        if let out = result.stdout, !out.isEmpty {
+            output += "stdout:\n```\n\(out)\n```\n"
+        }
+        if let err = result.stderr, !err.isEmpty {
+            output += "stderr:\n```\n\(err)\n```\n"
+        }
+        message = output
+        sendMessage()
+        runningCommand = nil
+        commandResult = nil
     }
 
     private func reloadChat() {

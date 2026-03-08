@@ -82,6 +82,24 @@ final class HTTPClient {
         return AgentResponse(output: output.isEmpty ? nil : output, error: errorMsg, sessionId: sessionIdResult)
     }
 
+    func runCommand(_ command: String, workspace: String?) async throws -> CommandResult {
+        let url = URL(string: baseURL + "/run")!
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 5 * 60
+        var body: [String: Any] = ["command": command]
+        if let w = workspace { body["workspace"] = w }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        let (data, _) = try await URLSession.shared.data(for: req)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return CommandResult(
+            stdout: json?["stdout"] as? String,
+            stderr: json?["stderr"] as? String,
+            exitCode: (json?["exitCode"] as? Int) ?? -1
+        )
+    }
+
     func healthCheck() async -> Bool {
         guard let url = URL(string: baseURL + "/health") else { return false }
         do {

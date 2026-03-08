@@ -48,6 +48,17 @@ final class PeerClient: NSObject, ObservableObject, MCSessionDelegate, MCNearbyS
         try await sendRequest(type: "getRepos", params: [:], key: "repos") as! [String]
     }
 
+    func runCommand(_ command: String, workspace: String?) async throws -> CommandResult {
+        var params: [String: Any] = ["command": command]
+        if let w = workspace { params["workspace"] = w }
+        let dict = try await sendRequest(type: "runCommand", params: params, key: nil) as? [String: Any]
+        return CommandResult(
+            stdout: dict?["stdout"] as? String,
+            stderr: dict?["stderr"] as? String,
+            exitCode: (dict?["exitCode"] as? Int) ?? -1
+        )
+    }
+
     func runAgent(workspace: String, message: String, sessionId: String? = nil) async throws -> AgentResponse {
         var params: [String: Any] = ["workspace": workspace, "message": message]
         if let s = sessionId { params["sessionId"] = s }

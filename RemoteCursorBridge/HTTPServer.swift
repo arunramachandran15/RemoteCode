@@ -117,6 +117,18 @@ final class HTTPServer {
             if let s = sid { response["sessionId"] = s }
             let json = (try? JSONSerialization.data(withJSONObject: response)) ?? Data()
             send(conn: conn, status: "200 OK", body: json, contentType: "application/json")
+        } else if req.method == "POST" && req.path == "/run" {
+            guard let str = bodyStr,
+                  let obj = try? JSONSerialization.jsonObject(with: Data(str.utf8)) as? [String: Any],
+                  let command = obj["command"] as? String else {
+                send(conn: conn, status: "400 Bad Request", body: "{\"error\":\"Missing command\"}", contentType: "application/json")
+                conn.cancel()
+                return
+            }
+            let workspace = obj["workspace"] as? String
+            let result = Self.runShellCommand(command, workspace: workspace)
+            let json = (try? JSONSerialization.data(withJSONObject: result)) ?? Data()
+            send(conn: conn, status: "200 OK", body: json, contentType: "application/json")
         } else if req.method == "GET" && req.path == "/health" {
             send(conn: conn, status: "200 OK", body: "{\"ok\":true}", contentType: "application/json")
         } else {
@@ -136,6 +148,29 @@ final class HTTPServer {
 
     private func send(conn: NWConnection, status: String, body: String, contentType: String? = nil) {
         send(conn: conn, status: status, body: Data(body.utf8), contentType: contentType)
+    }
+
+    static func runShellCommand(_ command: String, workspace: String?) -> [String: Any] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-l", "-c", command]
+        if let w = workspace, !w.isEmpty {
+            process.currentDirectoryURL = URL(fileURLWithPath: w)
+        }
+        process.environment = ProcessInfo.processInfo.environment
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return ["stdout": "", "stderr": "Failed to run: \(error.localizedDescription)", "exitCode": -1]
+        }
+        let stdout = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let stderr = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        return ["stdout": stdout, "stderr": stderr, "exitCode": process.terminationStatus]
     }
 
     private func sendStreaming(conn: NWConnection, workspace: String, message: String, sessionId: String?) {

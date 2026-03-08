@@ -17,6 +17,8 @@
 		B1000008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B2000008 /* Assets.xcassets */; };
 		B1000009 /* MultipeerConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B3000001 /* MultipeerConnectivity.framework */; };
 		B1000010 /* ChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000010 /* ChatStore.swift */; };
+		B1000011 /* MarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000011 /* MarkdownView.swift */; };
+		B1000012 /* TerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000012 /* TerminalView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,6 +33,8 @@
 		B2000009 /* RemoteCursorApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RemoteCursorApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B3000001 /* MultipeerConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MultipeerConnectivity.framework; path = System/Library/Frameworks/MultipeerConnectivity.framework; sourceTree = SDKROOT; };
 		B2000010 /* ChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStore.swift; sourceTree = "<group>"; };
+		B2000011 /* MarkdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownView.swift; sourceTree = "<group>"; };
+		B2000012 /* TerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -63,6 +67,8 @@
 				B2000004 /* AgentView.swift */,
 				B2000005 /* Models.swift */,
 				B2000010 /* ChatStore.swift */,
+				B2000011 /* MarkdownView.swift */,
+				B2000012 /* TerminalView.swift */,
 				B5000004 /* Services */,
 				B2000008 /* Assets.xcassets */,
 			);
@@ -169,6 +175,8 @@
 				B1000004 /* AgentView.swift in Sources */,
 				B1000005 /* Models.swift in Sources */,
 				B1000010 /* ChatStore.swift in Sources */,
+				B1000011 /* MarkdownView.swift in Sources */,
+				B1000012 /* TerminalView.swift in Sources */,
 				B1000006 /* HTTPClient.swift in Sources */,
 				B1000007 /* PeerClient.swift in Sources */,
 			);

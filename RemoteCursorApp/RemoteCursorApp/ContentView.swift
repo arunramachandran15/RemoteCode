@@ -10,22 +10,55 @@ struct ContentView: View {
     @State private var isConnected = false
     @State private var isReconnecting = false
     @State private var wifiReconnectTask: Task<Void, Never>?
+    @State private var terminalToAgentMessage = ""
+    @State private var selectedTab = 0
 
     var body: some View {
         Group {
             if isConnected {
-                AgentView(
-                    peer: peer,
-                    wifiURL: wifiURL,
-                    connectionMode: connectionMode ?? .wifi,
-                    onConnectionLost: { triggerReconnect() }
-                )
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Disconnect") {
-                            disconnect()
+                TabView(selection: $selectedTab) {
+                    NavigationStack {
+                        AgentView(
+                            peer: peer,
+                            wifiURL: wifiURL,
+                            connectionMode: connectionMode ?? .wifi,
+                            onConnectionLost: { triggerReconnect() },
+                            externalMessage: $terminalToAgentMessage
+                        )
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Disconnect") { disconnect() }
+                            }
                         }
                     }
+                    .tabItem {
+                        Label("Agent", systemImage: "brain")
+                    }
+                    .tag(0)
+
+                    NavigationStack {
+                        TerminalView(
+                            peer: peer,
+                            wifiURL: wifiURL,
+                            connectionMode: connectionMode ?? .wifi,
+                            sendToAgent: Binding(
+                                get: { terminalToAgentMessage },
+                                set: { newValue in
+                                    terminalToAgentMessage = newValue
+                                    if !newValue.isEmpty { selectedTab = 0 }
+                                }
+                            )
+                        )
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Disconnect") { disconnect() }
+                            }
+                        }
+                    }
+                    .tabItem {
+                        Label("Terminal", systemImage: "terminal")
+                    }
+                    .tag(1)
                 }
                 .overlay {
                     if isReconnecting {
