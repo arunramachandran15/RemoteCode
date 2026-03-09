@@ -154,11 +154,10 @@ enum AgentRunner {
         if err.contains("No such file or directory") || err.contains("not found") {
             err = "Cursor CLI (agent) not found. Install from Cursor → Install CLI. Restart the bridge."
         }
-        let allText = (fullOutput + " " + err).lowercased()
-        if allText.contains("trust") {
+        let errLower = err.lowercased()
+        if process.terminationStatus != 0 &&
+           (errLower.contains("workspace trust") || errLower.contains("pass --trust") || errLower.contains("--yolo")) {
             print("AgentRunner: Trust error detected. stderr: \(err)")
-            print("AgentRunner: stdout: \(fullOutput)")
-            print("AgentRunner: Hint — open this workspace in Cursor GUI and trust it, or run: cursor \(workspace)")
             if err.isEmpty {
                 err = "Workspace trust required. Open '\(workspace)' in Cursor on your Mac and click 'Trust' in the dialog, then try again."
             }

@@ -53,11 +53,15 @@ app.post('/agent/stream', async (req, res) => {
   res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('Transfer-Encoding', 'chunked');
   res.flushHeaders && res.flushHeaders();
+  // Reduce time-to-first-byte: disable Nagle so small chunks are sent immediately.
+  if (req.socket) req.socket.setNoDelay(true);
 
   const sendLine = (obj) => {
     res.write(JSON.stringify(obj) + '\n');
     if (res.flush) res.flush();
   };
+  // Send a line immediately so the client sees the stream has started (avoids perceived delay).
+  sendLine({ started: true });
 
   try {
     const result = await runStreaming(workspace, message, sessionId, (delta) => {

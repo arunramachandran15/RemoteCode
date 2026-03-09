@@ -1514,8 +1514,8 @@ struct ChatDetailView: View {
                         onSessionUpdated?(newSid)
                     }
                     let content = (res.output ?? "") + (res.error.map { "\n\nError: \($0)" } ?? "")
-                    let combined = (res.output ?? "") + (res.error ?? "")
-                    if combined.lowercased().contains("trust") {
+                    let errText = (res.error ?? "").lowercased()
+                    if errText.contains("workspace trust") || errText.contains("pass --trust") || errText.contains("--yolo") {
                         showTrustAlert = true
                     }
                     if !content.isEmpty {
@@ -1541,7 +1541,8 @@ struct ChatDetailView: View {
                     streamingBuffer = ""
                     streamingContent = ""
                     loading = false
-                    if error.localizedDescription.lowercased().contains("trust") {
+                    let errDesc = error.localizedDescription.lowercased()
+                    if errDesc.contains("workspace trust") || errDesc.contains("pass --trust") || errDesc.contains("--yolo") {
                         showTrustAlert = true
                     }
                     let errMsg = ChatMessage(

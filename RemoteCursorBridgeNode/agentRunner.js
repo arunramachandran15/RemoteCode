@@ -1,8 +1,13 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
+
+// Cache agent path so we don't run execSync('which agent') on every request (saves 50–200ms per request).
+let cachedAgentPath = null;
 
 function findAgent() {
+  if (cachedAgentPath) return cachedAgentPath;
   const pathEnv = [
     path.join(os.homedir(), '.local', 'bin'),
     '/usr/local/bin',
@@ -10,11 +15,14 @@ function findAgent() {
     '/usr/bin',
     process.env.PATH || '',
   ].join(':');
-  const { execSync } = require('child_process');
   try {
+    const { execSync } = require('child_process');
     const out = execSync('which agent', { encoding: 'utf8', env: { ...process.env, PATH: pathEnv } });
     const p = out.trim();
-    if (p) return p;
+    if (p && fs.existsSync(p)) {
+      cachedAgentPath = p;
+      return p;
+    }
   } catch (_) {}
   const candidates = [
     path.join(os.homedir(), '.local', 'bin', 'agent'),
@@ -22,10 +30,10 @@ function findAgent() {
     '/opt/homebrew/bin/agent',
   ];
   for (const p of candidates) {
-    try {
-      const fs = require('fs');
-      if (fs.existsSync(p)) return p;
-    } catch (_) {}
+    if (fs.existsSync(p)) {
+      cachedAgentPath = p;
+      return p;
+    }
   }
   return null;
 }
