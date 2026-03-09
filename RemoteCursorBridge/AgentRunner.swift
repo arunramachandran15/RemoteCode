@@ -42,10 +42,9 @@ enum AgentRunner {
         guard let agentPath = agentExecutablePath else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: agentPath)
-        process.arguments = ["create-chat", "--workspace", workspace, "--trust"]
+        process.arguments = ["create-chat", "--workspace", workspace]
         process.currentDirectoryURL = URL(fileURLWithPath: workspace)
         process.environment = agentEnvironment()
-        pipeYesToStdin(process)
         let pipe = Pipe()
         process.standardOutput = pipe
         let errPipe = Pipe()
@@ -76,10 +75,9 @@ enum AgentRunner {
             return (nil, "Cursor CLI (agent) not found. Install from Cursor → Install CLI, then restart the bridge.", nil)
         }
         var sid = sessionId
-        if sid == nil {
-            sid = createChat(workspace: workspace)
-        }
-        var args: [String] = ["-p", message, "--workspace", workspace, "--trust", "--output-format", "stream-json", "--stream-partial-output"]
+        // Don't call create-chat for new workspaces (it can prompt for trust). Use -p --trust and capture session_id from stream.
+        // --trust only works with -p (print/headless mode) so workspace is trusted without interactive prompt for new folders.
+        var args: [String] = ["-p", message, "--trust", "--workspace", workspace, "--output-format", "stream-json", "--stream-partial-output"]
         if let s = sid {
             args = ["--resume", s] + args
         }
@@ -88,7 +86,6 @@ enum AgentRunner {
         process.arguments = args
         process.currentDirectoryURL = URL(fileURLWithPath: workspace)
         process.environment = agentEnvironment()
-        pipeYesToStdin(process)
         let outPipe = Pipe()
         let errPipe = Pipe()
         process.standardOutput = outPipe
@@ -106,8 +103,9 @@ enum AgentRunner {
                       let d = line.data(using: .utf8),
                       let json = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
                       let type = json["type"] as? String else { continue }
-                if type == "result", json["subtype"] as? String == "success", let result = json["result"] as? String, !result.isEmpty {
-                    fullOutput = result
+                if type == "result", json["subtype"] as? String == "success" {
+                    if let result = json["result"] as? String, !result.isEmpty { fullOutput = result }
+                    if let s = json["session_id"] as? String, !s.isEmpty { sid = s }
                 } else if type == "assistant", let message = json["message"] as? [String: Any], let content = message["content"] as? [[String: Any]] {
                     for part in content {
                         if part["type"] as? String == "text", let text = part["text"] as? String, !text.isEmpty {
@@ -140,8 +138,9 @@ enum AgentRunner {
             guard !line.isEmpty, let d = line.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
                   let type = json["type"] as? String else { continue }
-            if type == "result", json["subtype"] as? String == "success", let result = json["result"] as? String, !result.isEmpty {
-                fullOutput = result
+            if type == "result", json["subtype"] as? String == "success" {
+                if let result = json["result"] as? String, !result.isEmpty { fullOutput = result }
+                if let s = json["session_id"] as? String, !s.isEmpty { sid = s }
             } else if type == "assistant", let message = json["message"] as? [String: Any], let content = message["content"] as? [[String: Any]] {
                 for part in content {
                     if part["type"] as? String == "text", let text = part["text"] as? String { fullOutput += text }

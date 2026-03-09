@@ -23,6 +23,7 @@ final class HTTPClient {
 
     func getRepos() async throws -> [String] {
         let url = URL(string: baseURL + "/repos")!
+        DebugLog.log("getRepos: GET \(url.absoluteString)")
         let (data, _) = try await URLSession.shared.data(from: url)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         guard let repos = json?["repos"] as? [String] else { throw NSError(domain: "HTTPClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"]) }
@@ -176,12 +177,24 @@ final class HTTPClient {
         return (ok, msg)
     }
 
+    /// Timeout for health check so "Mac not reachable" shows in ~15s instead of 60s.
+    private static let healthCheckTimeout: TimeInterval = 15
+
     func healthCheck() async -> Bool {
-        guard let url = URL(string: baseURL + "/health") else { return false }
+        guard let url = URL(string: baseURL + "/health") else {
+            DebugLog.log("healthCheck: invalid URL base=\(baseURL)")
+            return false
+        }
+        DebugLog.log("healthCheck: GET \(url.absoluteString)")
         do {
-            let (_, res) = try await URLSession.shared.data(from: url)
-            return (res as? HTTPURLResponse)?.statusCode == 200
+            var req = URLRequest(url: url)
+            req.timeoutInterval = Self.healthCheckTimeout
+            let (_, res) = try await URLSession.shared.data(for: req)
+            let ok = (res as? HTTPURLResponse)?.statusCode == 200
+            DebugLog.log("healthCheck: \(ok ? "OK" : "failed (non-200)")")
+            return ok
         } catch {
+            DebugLog.log("healthCheck: error \(error.localizedDescription)")
             return false
         }
     }

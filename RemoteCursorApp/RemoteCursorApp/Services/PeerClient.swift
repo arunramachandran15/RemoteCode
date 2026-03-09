@@ -19,6 +19,7 @@ final class PeerClient: NSObject, ObservableObject, MCSessionDelegate, MCNearbyS
     var preferredPeerDisplayName: String?
 
     func startBrowsing() {
+        DebugLog.log("Peer: startBrowsing (serviceType=\(serviceType))")
         connectionError = nil
         discoveredPeers = []
         let sess = MCSession(peer: myPeerID, securityIdentity: nil, encryptionPreference: .required)
@@ -41,6 +42,7 @@ final class PeerClient: NSObject, ObservableObject, MCSessionDelegate, MCNearbyS
 
     func connect(to peer: MCPeerID) {
         guard let sess = session else { return }
+        DebugLog.log("Peer: inviting \(peer.displayName)")
         browser?.invitePeer(peer, to: sess, withContext: nil, timeout: 30)
     }
 
@@ -243,6 +245,7 @@ final class PeerClient: NSObject, ObservableObject, MCSessionDelegate, MCNearbyS
 
 extension PeerClient {
     func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String: String]?) {
+        DebugLog.log("Peer: found Mac \"\(peerID.displayName)\"")
         DispatchQueue.main.async {
             if !self.discoveredPeers.contains(where: { $0.displayName == peerID.displayName }) {
                 self.discoveredPeers.append(peerID)
@@ -260,6 +263,7 @@ extension PeerClient {
     }
 
     func browser(_ browser: MCNearbyServiceBrowser, didNotStartBrowsingForPeers error: Error) {
+        DebugLog.log("Peer: didNotStartBrowsing error=\(error.localizedDescription)")
         DispatchQueue.main.async {
             self.connectionError = error.localizedDescription
         }
@@ -268,6 +272,14 @@ extension PeerClient {
 
 extension PeerClient {
     func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
+        let stateStr: String
+        switch state {
+        case .connected: stateStr = "connected"
+        case .notConnected: stateStr = "notConnected"
+        case .connecting: stateStr = "connecting"
+        @unknown default: stateStr = "unknown"
+        }
+        DebugLog.log("Peer: session state=\(stateStr) peer=\(peerID.displayName)")
         DispatchQueue.main.async {
             if state == .connected {
                 self.connectedPeer = peerID

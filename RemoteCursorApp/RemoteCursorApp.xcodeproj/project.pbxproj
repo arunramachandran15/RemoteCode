@@ -23,6 +23,8 @@
 		B1000014 /* FileBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000014 /* FileBrowserView.swift */; };
 		B1000015 /* CodeViewerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000015 /* CodeViewerView.swift */; };
 		B1000016 /* ImagePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000016 /* ImagePicker.swift */; };
+		B1000017 /* DebugLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000017 /* DebugLog.swift */; };
+		B1000018 /* BonjourBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000018 /* BonjourBrowser.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -43,6 +45,8 @@
 		B2000014 /* FileBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileBrowserView.swift; sourceTree = "<group>"; };
 		B2000015 /* CodeViewerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeViewerView.swift; sourceTree = "<group>"; };
 		B2000016 /* ImagePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePicker.swift; sourceTree = "<group>"; };
+		B2000017 /* DebugLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLog.swift; sourceTree = "<group>"; };
+		B2000018 /* BonjourBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BonjourBrowser.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -81,6 +85,7 @@
 				B2000014 /* FileBrowserView.swift */,
 				B2000015 /* CodeViewerView.swift */,
 				B2000016 /* ImagePicker.swift */,
+				B2000017 /* DebugLog.swift */,
 				B5000004 /* Services */,
 				B2000008 /* Assets.xcassets */,
 			);
@@ -100,6 +105,7 @@
 			children = (
 				B2000006 /* HTTPClient.swift */,
 				B2000007 /* PeerClient.swift */,
+				B2000018 /* BonjourBrowser.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -193,6 +199,8 @@
 				B1000014 /* FileBrowserView.swift in Sources */,
 				B1000015 /* CodeViewerView.swift in Sources */,
 				B1000016 /* ImagePicker.swift in Sources */,
+				B1000017 /* DebugLog.swift in Sources */,
+				B1000018 /* BonjourBrowser.swift in Sources */,
 				B1000006 /* HTTPClient.swift in Sources */,
 				B1000007 /* PeerClient.swift in Sources */,
 			);

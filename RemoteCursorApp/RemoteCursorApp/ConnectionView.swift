@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ConnectionView: View {
     @ObservedObject var peer: PeerClient
+    @StateObject private var bonjour = BonjourBrowser()
     @Binding var wifiURL: String
     @Binding var connectionMode: ConnectionMode?
     @Binding var isConnected: Bool
@@ -65,6 +66,31 @@ struct ConnectionView: View {
 
                     if let err = peer.connectionError {
                         Text(err).foregroundStyle(.red).font(.caption)
+                    }
+                }
+
+                Section("Or discover via Bonjour (Node bridge)") {
+                    Button {
+                        bonjour.start()
+                    } label: {
+                        Label("Find Mac (Bonjour)", systemImage: "network")
+                    }
+                    .disabled(bonjour.isSearching)
+                    if bonjour.isSearching {
+                        HStack {
+                            ProgressView()
+                            Text("Searching…").foregroundStyle(.secondary)
+                        }
+                    }
+                    ForEach(bonjour.discoveredServices) { svc in
+                        Button {
+                            connectToBonjourService(svc)
+                        } label: {
+                            Label(svc.name, systemImage: "desktopcomputer")
+                        }
+                    }
+                    if let e = bonjour.errorMessage {
+                        Text(e).foregroundStyle(.red).font(.caption)
                     }
                 }
 
@@ -146,5 +172,12 @@ struct ConnectionView: View {
                 }
             }
         }
+    }
+
+    private func connectToBonjourService(_ svc: BonjourBrowser.DiscoveredBonjourService) {
+        bonjour.stop()
+        wifiURL = svc.baseURL
+        connectionMode = .wifi
+        checkWifiAndConnect()
     }
 }

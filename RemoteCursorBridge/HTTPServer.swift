@@ -106,6 +106,7 @@ final class HTTPServer {
         let body = bodyStart < data.count ? Data(data.dropFirst(bodyStart)) : Data()
         let bodyStr = String(data: body, encoding: .utf8)
 
+        print("HTTP: \(req.method) \(req.path)")
         if req.method == "GET" && req.path == "/repos" {
             let repos = Config.repoPaths
             let json = (try? JSONSerialization.data(withJSONObject: ["repos": repos])) ?? Data()

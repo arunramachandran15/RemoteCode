@@ -1,0 +1,17 @@
+{
+  "name": "remote-cursor-bridge-node",
+  "version": "1.0.0",
+  "description": "Node.js bridge for Remote Cursor - same HTTP API as Swift bridge, with Bonjour discovery",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "bonjour": "^3.5.0",
+    "express": "^4.21.0"
+  }
+}
