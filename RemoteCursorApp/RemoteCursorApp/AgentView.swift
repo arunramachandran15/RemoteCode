@@ -120,6 +120,7 @@ struct AgentView: View {
     let connectionMode: ConnectionMode?
     var onConnectionLost: (() -> Void)?
     @Binding var externalMessage: String
+    @ObservedObject private var bgManager = BackgroundAgentManager.shared
     @State private var repos: [RepoItem] = []
     @State private var selectedRepo: RepoItem?
     @State private var savedWorkspaces: [ChatStore.WorkspaceSummary] = []
@@ -330,6 +331,10 @@ struct AgentView: View {
             }
             reloadConversations()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .backgroundAgentTaskCompleted)) { _ in
+            reloadConversations()
+            loadSavedWorkspaces()
+        }
         .onChange(of: selectedRepo?.path) { newPath in
             if let p = newPath { lastSelectedRepoPath = p }
             reloadConversations()
@@ -396,7 +401,12 @@ struct AgentView: View {
 
     private func conversationRow(_ conv: Conversation) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            if !conv.isRead {
+            if bgManager.isRunning(conv.id) {
+                ProgressView()
+                    .scaleEffect(0.7)
+                    .frame(width: 10, height: 10)
+                    .padding(.top, 6)
+            } else if !conv.isRead {
                 Circle()
                     .fill(.blue)
                     .frame(width: 10, height: 10)
@@ -410,9 +420,15 @@ struct AgentView: View {
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                     Spacer()
-                    Text(chatTimestamp(conv.lastMessageAt ?? conv.createdAt))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    if bgManager.isRunning(conv.id) {
+                        Text("Agent working…")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    } else {
+                        Text(chatTimestamp(conv.lastMessageAt ?? conv.createdAt))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 if let preview = conv.lastMessagePreview, !preview.isEmpty {
                     Text(preview.replacingOccurrences(of: "\n", with: " "))
@@ -860,6 +876,7 @@ struct ChatDetailView: View {
     var onConnectionLost: (() -> Void)?
     var onDismiss: (String?) -> Void
 
+    @ObservedObject private var bgManager = BackgroundAgentManager.shared
     @State private var chatMessages: [ChatMessage] = []
     @State private var flatItems: [ChatItem] = []
     @State private var message = ""
@@ -885,7 +902,6 @@ struct ChatDetailView: View {
 
     @State private var loadingMessages = true
     @State private var isNearBottom = true
-    @State private var streamingBuffer = ""
     @State private var scrollProxy: ScrollViewProxy?
     @State private var showTrustAlert = false
     @State private var trustMessage = ""
@@ -953,9 +969,10 @@ struct ChatDetailView: View {
                     .scrollDismissesKeyboard(.interactively)
                     .coordinateSpace(name: "chatScroll")
                     .onReceive(Timer.publish(every: 0.12, on: .main, in: .common).autoconnect()) { _ in
-                        guard !streamingBuffer.isEmpty else { return }
-                        streamingContent += streamingBuffer
-                        streamingBuffer = ""
+                        guard bgManager.isRunning(conversation.id) else { return }
+                        let latest = bgManager.getStreamingContent(conversation.id)
+                        guard latest.count != streamingContent.count else { return }
+                        streamingContent = latest
                         if isNearBottom {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
@@ -1011,12 +1028,36 @@ struct ChatDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Back") { onDismiss(sessionId) }
+                Button("Back") {
+                    onDismiss(sessionId)
+                }
             }
         }
         .onAppear {
             sessionId = repoSessionId
             loadMessagesAsync()
+            if bgManager.isRunning(conversation.id) {
+                loading = true
+                streamingContent = bgManager.getStreamingContent(conversation.id)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .backgroundAgentTaskCompleted)) { notification in
+            guard let convId = notification.userInfo?["conversationId"] as? String,
+                  convId == conversation.id else { return }
+            if let sid = notification.userInfo?["sessionId"] as? String {
+                sessionId = sid
+            }
+            streamingContent = ""
+            loading = false
+            loadMessagesAsync()
+            ChatStore.shared.markConversationRead(conversationId: conversation.id)
+
+            let errText = (notification.userInfo?["responseError"] as? String ?? "").lowercased()
+            let errStr = (notification.userInfo?["error"] as? String ?? "").lowercased()
+            let combined = errText + errStr
+            if combined.contains("workspace trust") || combined.contains("pass --trust") || combined.contains("--yolo") {
+                showTrustAlert = true
+            }
         }
         .sheet(isPresented: $showCommandResult) {
             commandResultSheet
@@ -1033,17 +1074,6 @@ struct ChatDetailView: View {
                     pendingImages.append(contentsOf: images)
                 }
             }
-        }
-        .confirmationDialog("Attach Image", isPresented: $showImageSourcePicker) {
-            Button("Take Photo") {
-                imagePickerSource = .camera
-                showImagePicker = true
-            }
-            Button("Choose from Library") {
-                imagePickerSource = .photoLibrary
-                showImagePicker = true
-            }
-            Button("Cancel", role: .cancel) {}
         }
         .alert("Image Upload Failed", isPresented: Binding(
             get: { imageUploadError != nil },
@@ -1250,6 +1280,17 @@ struct ChatDetailView: View {
                         .foregroundStyle(Color.accentColor)
                 }
                 .disabled(loading || uploadingImage)
+                .confirmationDialog("Attach Image", isPresented: $showImageSourcePicker) {
+                    Button("Take Photo") {
+                        imagePickerSource = .camera
+                        showImagePicker = true
+                    }
+                    Button("Choose from Library") {
+                        imagePickerSource = .photoLibrary
+                        showImagePicker = true
+                    }
+                    Button("Cancel", role: .cancel) {}
+                }
 
                 TextField("Message…", text: $message, axis: .vertical)
                     .lineLimit(1...6)
@@ -1512,7 +1553,6 @@ struct ChatDetailView: View {
         message = ""
         loading = true
         streamingContent = ""
-        streamingBuffer = ""
         isNearBottom = true
         haptic.impactOccurred()
 
@@ -1530,74 +1570,15 @@ struct ChatDetailView: View {
         chatMessages.append(userMsg)
         rebuildFlatItems()
 
-        Task {
-            do {
-                let res: AgentResponse
-                if connectionMode == .wifi {
-                    let client = HTTPClient(baseURL: wifiURL.trimmingCharacters(in: .whitespaces))
-                    res = try await client.runAgentStreaming(workspace: repo.path, message: text, sessionId: sessionId) { delta in
-                        streamingBuffer += delta
-                    }
-                } else {
-                    res = try await peer.runAgentStreaming(workspace: repo.path, message: text, sessionId: sessionId) { delta in
-                        streamingBuffer += delta
-                    }
-                }
-                await MainActor.run {
-                    if let newSid = res.sessionId {
-                        sessionId = newSid
-                    }
-                    let content = (res.output ?? "") + (res.error.map { "\n\nError: \($0)" } ?? "")
-                    let errText = (res.error ?? "").lowercased()
-                    if errText.contains("workspace trust") || errText.contains("pass --trust") || errText.contains("--yolo") {
-                        showTrustAlert = true
-                    }
-
-                    streamingContent = ""
-                    streamingBuffer = ""
-                    loading = false
-
-                    if !content.isEmpty {
-                        let assistantMsg = ChatMessage(
-                            id: UUID().uuidString,
-                            conversationId: conversation.id,
-                            workspacePath: repo.path,
-                            sessionId: sessionId,
-                            role: .assistant,
-                            content: content,
-                            createdAt: Date()
-                        )
-                        ChatStore.shared.insert(assistantMsg)
-                        chatMessages.append(assistantMsg)
-                        rebuildFlatItems()
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    streamingContent += streamingBuffer
-                    streamingBuffer = ""
-                    streamingContent = ""
-                    loading = false
-                    let errDesc = error.localizedDescription.lowercased()
-                    if errDesc.contains("workspace trust") || errDesc.contains("pass --trust") || errDesc.contains("--yolo") {
-                        showTrustAlert = true
-                    }
-                    let errMsg = ChatMessage(
-                        id: UUID().uuidString,
-                        conversationId: conversation.id,
-                        workspacePath: repo.path,
-                        sessionId: sessionId,
-                        role: .assistant,
-                        content: "Error: \(error.localizedDescription)",
-                        createdAt: Date()
-                    )
-                    ChatStore.shared.insert(errMsg)
-                    chatMessages.append(errMsg)
-                    rebuildFlatItems()
-                    if isConnectionError(error) { onConnectionLost?() }
-                }
-            }
-        }
+        bgManager.submit(BackgroundAgentManager.AgentRequest(
+            conversationId: conversation.id,
+            workspacePath: repo.path,
+            message: text,
+            sessionId: sessionId,
+            connectionMode: connectionMode ?? .wifi,
+            wifiURL: wifiURL,
+            peer: peer
+        ))
     }
 
     private func executeCommand(_ command: String) {

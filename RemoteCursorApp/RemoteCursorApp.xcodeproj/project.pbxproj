@@ -27,6 +27,8 @@
 		B1000018 /* BonjourBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000018 /* BonjourBrowser.swift */; };
 		B1000019 /* DownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000019 /* DownloadManager.swift */; };
 		B1000020 /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000020 /* DownloadsView.swift */; };
+		B1000021 /* CloudBackupManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000021 /* CloudBackupManager.swift */; };
+		B1000022 /* BackgroundAgentManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000022 /* BackgroundAgentManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -51,6 +53,9 @@
 		B2000018 /* BonjourBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BonjourBrowser.swift; sourceTree = "<group>"; };
 		B2000019 /* DownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadManager.swift; sourceTree = "<group>"; };
 		B2000020 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
+		B2000021 /* CloudBackupManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudBackupManager.swift; sourceTree = "<group>"; };
+		B2000022 /* BackgroundAgentManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundAgentManager.swift; sourceTree = "<group>"; };
+		B2000023 /* RemoteCursorApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = RemoteCursorApp.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -92,6 +97,9 @@
 				B2000017 /* DebugLog.swift */,
 				B2000019 /* DownloadManager.swift */,
 				B2000020 /* DownloadsView.swift */,
+				B2000021 /* CloudBackupManager.swift */,
+				B2000022 /* BackgroundAgentManager.swift */,
+				B2000023 /* RemoteCursorApp.entitlements */,
 				B5000004 /* Services */,
 				B2000008 /* Assets.xcassets */,
 			);
@@ -211,6 +219,8 @@
 				B1000020 /* DownloadsView.swift in Sources */,
 				B1000006 /* HTTPClient.swift in Sources */,
 				B1000007 /* PeerClient.swift in Sources */,
+				B1000021 /* CloudBackupManager.swift in Sources */,
+				B1000022 /* BackgroundAgentManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
