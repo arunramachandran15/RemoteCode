@@ -57,29 +57,30 @@ struct ImagePicker: UIViewControllerRepresentable {
         }
 
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            guard let image = info[.originalImage] as? UIImage,
-                  let data = Self.resizedJPEGData(from: image) else {
-                onImagePicked(Data())
-                return
+            let image = info[.originalImage] as? UIImage
+            let data = image.flatMap { Self.resizedJPEGData(from: $0) } ?? Data()
+            picker.dismiss(animated: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                self.onImagePicked(data)
             }
-            onImagePicked(data)
         }
 
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            onImagePicked(Data())
+            picker.dismiss(animated: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                self.onImagePicked(Data())
+            }
         }
 
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
             guard let provider = results.first?.itemProvider, provider.canLoadObject(ofClass: UIImage.self) else {
-                onImagePicked(Data())
+                DispatchQueue.main.async {
+                    self.onImagePicked(Data())
+                }
                 return
             }
             provider.loadObject(ofClass: UIImage.self) { [weak self] obj, _ in
-                guard let image = obj as? UIImage,
-                      let data = Self.resizedJPEGData(from: image) else {
-                    DispatchQueue.main.async { self?.onImagePicked(Data()) }
-                    return
-                }
+                let data = (obj as? UIImage).flatMap { Self.resizedJPEGData(from: $0) } ?? Data()
                 DispatchQueue.main.async {
                     self?.onImagePicked(data)
                 }

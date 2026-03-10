@@ -163,6 +163,32 @@ final class HTTPClient {
         return path
     }
 
+    func downloadFile(remotePath: String, to localURL: URL, onProgress: @escaping (Double) -> Void) async throws {
+        var comps = URLComponents(string: baseURL + "/download")!
+        comps.queryItems = [URLQueryItem(name: "path", value: remotePath)]
+        guard let url = comps.url else {
+            throw NSError(domain: "HTTPClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+        }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 10 * 60
+        let dir = localURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let (tempURL, response) = try await URLSession.shared.download(for: req)
+        guard let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 else {
+            try? FileManager.default.removeItem(at: tempURL)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if code == 404 {
+                throw NSError(domain: "HTTPClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "File not found on Mac"])
+            }
+            throw NSError(domain: "HTTPClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Download failed (HTTP \(code))"])
+        }
+        if FileManager.default.fileExists(atPath: localURL.path) {
+            try FileManager.default.removeItem(at: localURL)
+        }
+        try FileManager.default.moveItem(at: tempURL, to: localURL)
+        await MainActor.run { onProgress(1.0) }
+    }
+
     func trustWorkspace(_ workspace: String) async throws -> (ok: Bool, message: String) {
         let url = URL(string: baseURL + "/trust-workspace")!
         var req = URLRequest(url: url)
@@ -181,21 +207,33 @@ final class HTTPClient {
     private static let healthCheckTimeout: TimeInterval = 15
 
     func healthCheck() async -> Bool {
+        let (ok, _) = await healthCheckDetailed()
+        return ok
+    }
+
+    func healthCheckDetailed() async -> (ok: Bool, error: String?) {
         guard let url = URL(string: baseURL + "/health") else {
-            DebugLog.log("healthCheck: invalid URL base=\(baseURL)")
-            return false
+            let msg = "Invalid URL: \(baseURL)/health"
+            DebugLog.log("healthCheck: \(msg)")
+            return (false, msg)
         }
         DebugLog.log("healthCheck: GET \(url.absoluteString)")
         do {
             var req = URLRequest(url: url)
             req.timeoutInterval = Self.healthCheckTimeout
             let (_, res) = try await URLSession.shared.data(for: req)
-            let ok = (res as? HTTPURLResponse)?.statusCode == 200
-            DebugLog.log("healthCheck: \(ok ? "OK" : "failed (non-200)")")
-            return ok
+            let code = (res as? HTTPURLResponse)?.statusCode ?? 0
+            if code == 200 {
+                DebugLog.log("healthCheck: OK")
+                return (true, nil)
+            }
+            let msg = "HTTP status \(code)"
+            DebugLog.log("healthCheck: \(msg)")
+            return (false, msg)
         } catch {
-            DebugLog.log("healthCheck: error \(error.localizedDescription)")
-            return false
+            let msg = "\(error.localizedDescription) [code: \((error as NSError).code)]"
+            DebugLog.log("healthCheck: \(msg)")
+            return (false, msg)
         }
     }
 }

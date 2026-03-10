@@ -20,6 +20,13 @@
 	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Remote Cursor needs local network access to find and connect to your Mac over Wi‑Fi.</string>
 	<key>NSBonjourServices</key>
@@ -50,5 +57,9 @@
 	<string>Remote Cursor uses the camera to take photos of errors or UI for the coding agent to review.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Remote Cursor needs photo library access to attach screenshots or images to send to the coding agent.</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 </dict>
 </plist>

@@ -12,7 +12,6 @@ struct FileBrowserView: View {
     @State private var loading = false
     @State private var errorMessage: String?
     @State private var selectedFile: FileItem?
-    @State private var showCodeViewer = false
     @State private var initialLoad = true
 
     var body: some View {
@@ -62,10 +61,27 @@ struct FileBrowserView: View {
                                 fileRow(file)
                             }
                             .contextMenu {
+                                if !file.isDirectory {
+                                    Button {
+                                        downloadFile(file.path)
+                                    } label: {
+                                        Label("Download", systemImage: "arrow.down.circle")
+                                    }
+                                }
                                 Button {
                                     UIPasteboard.general.string = file.path
                                 } label: {
                                     Label("Copy Path", systemImage: "doc.on.doc")
+                                }
+                            }
+                            .swipeActions(edge: .leading) {
+                                if !file.isDirectory {
+                                    Button {
+                                        downloadFile(file.path)
+                                    } label: {
+                                        Label("Download", systemImage: "arrow.down.circle")
+                                    }
+                                    .tint(.blue)
                                 }
                             }
                         }
@@ -86,16 +102,14 @@ struct FileBrowserView: View {
             navigationPath = []
             loadFiles()
         }
-        .sheet(isPresented: $showCodeViewer) {
-            if let file = selectedFile {
-                NavigationStack {
-                    CodeViewerView(
-                        peer: peer,
-                        wifiURL: wifiURL,
-                        connectionMode: connectionMode,
-                        file: file
-                    )
-                }
+        .sheet(item: $selectedFile) { file in
+            NavigationStack {
+                CodeViewerView(
+                    peer: peer,
+                    wifiURL: wifiURL,
+                    connectionMode: connectionMode,
+                    file: file
+                )
             }
         }
     }
@@ -149,8 +163,16 @@ struct FileBrowserView: View {
             loadFiles()
         } else {
             selectedFile = file
-            showCodeViewer = true
         }
+    }
+
+    private func downloadFile(_ remotePath: String) {
+        DownloadManager.shared.startDownload(
+            remotePath: remotePath,
+            peer: peer,
+            wifiURL: wifiURL,
+            connectionMode: connectionMode
+        )
     }
 
     private func goBack() {

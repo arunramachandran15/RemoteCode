@@ -163,6 +163,40 @@ app.post('/upload-image', (req, res) => {
   }
 });
 
+// GET /download?path= — stream raw file for download
+app.get('/download', (req, res) => {
+  const filePath = req.query.path;
+  if (!filePath) return res.status(400).json({ error: 'Missing path' });
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+  try {
+    const stat = fs.statSync(filePath);
+    if (stat.isDirectory()) return res.status(400).json({ error: 'Path is a directory' });
+    const filename = path.basename(filePath);
+    const mimeTypes = {
+      '.apk': 'application/vnd.android.package-archive',
+      '.ipa': 'application/octet-stream',
+      '.zip': 'application/zip',
+      '.dmg': 'application/x-apple-diskimage',
+      '.app': 'application/octet-stream',
+      '.tar': 'application/x-tar',
+      '.gz': 'application/gzip',
+      '.tgz': 'application/gzip',
+      '.pdf': 'application/pdf',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+    };
+    const ext = path.extname(filename).toLowerCase();
+    const contentType = mimeTypes[ext] || 'application/octet-stream';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    fs.createReadStream(filePath).pipe(res);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /trust-workspace — body: { workspace }
 app.post('/trust-workspace', (req, res) => {
   const { workspace } = req.body || {};

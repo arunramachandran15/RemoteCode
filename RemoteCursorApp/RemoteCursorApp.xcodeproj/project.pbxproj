@@ -25,6 +25,8 @@
 		B1000016 /* ImagePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000016 /* ImagePicker.swift */; };
 		B1000017 /* DebugLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000017 /* DebugLog.swift */; };
 		B1000018 /* BonjourBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000018 /* BonjourBrowser.swift */; };
+		B1000019 /* DownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000019 /* DownloadManager.swift */; };
+		B1000020 /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000020 /* DownloadsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -47,6 +49,8 @@
 		B2000016 /* ImagePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePicker.swift; sourceTree = "<group>"; };
 		B2000017 /* DebugLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLog.swift; sourceTree = "<group>"; };
 		B2000018 /* BonjourBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BonjourBrowser.swift; sourceTree = "<group>"; };
+		B2000019 /* DownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadManager.swift; sourceTree = "<group>"; };
+		B2000020 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -86,6 +90,8 @@
 				B2000015 /* CodeViewerView.swift */,
 				B2000016 /* ImagePicker.swift */,
 				B2000017 /* DebugLog.swift */,
+				B2000019 /* DownloadManager.swift */,
+				B2000020 /* DownloadsView.swift */,
 				B5000004 /* Services */,
 				B2000008 /* Assets.xcassets */,
 			);
@@ -201,6 +207,8 @@
 				B1000016 /* ImagePicker.swift in Sources */,
 				B1000017 /* DebugLog.swift in Sources */,
 				B1000018 /* BonjourBrowser.swift in Sources */,
+				B1000019 /* DownloadManager.swift in Sources */,
+				B1000020 /* DownloadsView.swift in Sources */,
 				B1000006 /* HTTPClient.swift in Sources */,
 				B1000007 /* PeerClient.swift in Sources */,
 			);

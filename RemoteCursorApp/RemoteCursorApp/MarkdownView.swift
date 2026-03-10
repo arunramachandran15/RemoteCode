@@ -3,6 +3,7 @@ import SwiftUI
 struct MarkdownView: View {
     let content: String
     var onRunCommand: ((String) -> Void)?
+    var onDownloadFile: ((String) -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -15,6 +16,25 @@ struct MarkdownView: View {
 }
 
 private let shellLanguages: Set<String> = ["bash", "shell", "sh", "zsh", ""]
+
+private let downloadableExtensions: Set<String> = [
+    "apk", "ipa", "zip", "tar", "gz", "tgz", "dmg", "app",
+    "aab", "deb", "pkg", "msi", "exe", "jar", "war",
+    "pdf", "csv", "xlsx", "docx"
+]
+
+private func extractFilePaths(_ text: String) -> [String] {
+    let pattern = #"(/[\w./-]+\.(\w{2,5}))"#
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+    let nsText = text as NSString
+    let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+    return matches.compactMap { match -> String? in
+        guard match.numberOfRanges >= 3 else { return nil }
+        let path = nsText.substring(with: match.range(at: 1))
+        let ext = nsText.substring(with: match.range(at: 2)).lowercased()
+        return downloadableExtensions.contains(ext) ? path : nil
+    }
+}
 
 private extension MarkdownView {
     enum Block {
@@ -56,7 +76,7 @@ private extension MarkdownView {
                 }
                 blocks.append(.codeBlock(lang.isEmpty ? nil : lang,
                                          code.joined(separator: "\n")))
-                i += 1
+                if i < lines.count { i += 1 }
                 continue
             }
 
@@ -117,21 +137,63 @@ private extension MarkdownView {
         case .codeBlock(let lang, let code):
             codeBlockView(language: lang, code: code)
         case .bullet(let text):
-            HStack(alignment: .top, spacing: 6) {
-                Text("•").foregroundStyle(.secondary)
-                inlineMarkdown(text)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .top, spacing: 6) {
+                    Text("•").foregroundStyle(.secondary)
+                    inlineMarkdown(text)
+                }
+                .padding(.leading, 8)
+                downloadButtons(for: text)
             }
-            .padding(.leading, 8)
         case .numbered(let num, let text):
-            HStack(alignment: .top, spacing: 6) {
-                Text("\(num).").foregroundStyle(.secondary).monospacedDigit()
-                inlineMarkdown(text)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .top, spacing: 6) {
+                    Text("\(num).").foregroundStyle(.secondary).monospacedDigit()
+                    inlineMarkdown(text)
+                }
+                .padding(.leading, 8)
+                downloadButtons(for: text)
             }
-            .padding(.leading, 8)
         case .paragraph(let text):
-            inlineMarkdown(text)
+            VStack(alignment: .leading, spacing: 4) {
+                inlineMarkdown(text)
+                downloadButtons(for: text)
+            }
         case .rule:
             Divider()
+        }
+    }
+
+    @ViewBuilder
+    func downloadButtons(for text: String) -> some View {
+        if onDownloadFile != nil {
+            let paths = extractFilePaths(text)
+            if !paths.isEmpty {
+                ForEach(paths, id: \.self) { filePath in
+                    Button {
+                        onDownloadFile?(filePath)
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Download")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                Text((filePath as NSString).lastPathComponent)
+                                    .font(.caption2)
+                                    .lineLimit(1)
+                            }
+                        } icon: {
+                            Image(systemName: "arrow.down.circle.fill")
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.blue.opacity(0.12))
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.leading, 8)
+                }
+            }
         }
     }
 
@@ -183,7 +245,7 @@ private extension MarkdownView {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.systemGray6))
+        .background(Color(.secondarySystemGroupedBackground))
         .cornerRadius(8)
     }
 

@@ -9,8 +9,8 @@ final class BonjourBrowser: NSObject, ObservableObject {
     @Published var isSearching = false
     @Published var errorMessage: String?
 
-    private var browser: NSNetServiceBrowser?
-    private var resolvingServices: [NSNetService] = []
+    private var browser: NetServiceBrowser?
+    private var resolvingServices: [NetService] = []
     private var resolved: [String: DiscoveredBonjourService] = [:] // name -> service
     private let queue = DispatchQueue.main
 
@@ -36,7 +36,7 @@ final class BonjourBrowser: NSObject, ObservableObject {
             self?.resolvingServices.forEach { $0.stop() }
             self?.resolvingServices = []
             self?.browser?.stop()
-            let b = NSNetServiceBrowser()
+            let b = NetServiceBrowser()
             b.delegate = self
             self?.browser = b
             b.searchForServices(ofType: Self.serviceType, inDomain: "")
@@ -61,35 +61,35 @@ final class BonjourBrowser: NSObject, ObservableObject {
     }
 }
 
-extension BonjourBrowser: NSNetServiceBrowserDelegate {
-    func netServiceBrowser(_ browser: NSNetServiceBrowser, didFind service: NSNetService, moreComing: Bool) {
+extension BonjourBrowser: NetServiceBrowserDelegate {
+    func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
         service.delegate = self
         service.resolve(withTimeout: 5)
         resolvingServices.append(service)
     }
 
-    func netServiceBrowser(_ browser: NSNetServiceBrowser, didRemove service: NSNetService, moreComing: Bool) {
+    func netServiceBrowser(_ browser: NetServiceBrowser, didRemove service: NetService, moreComing: Bool) {
         resolvingServices.removeAll { $0 === service }
         resolved.removeValue(forKey: service.name)
         discoveredServices = Array(resolved.values).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    func netServiceBrowser(_ browser: NSNetServiceBrowser, didNotSearch error: [String: NSNumber]) {
+    func netServiceBrowser(_ browser: NetServiceBrowser, didNotSearch error: [String: NSNumber]) {
         queue.async { [weak self] in
             self?.isSearching = false
             self?.errorMessage = "Bonjour search failed"
         }
     }
 
-    func netServiceBrowserDidStopSearch(_ browser: NSNetServiceBrowser) {
+    func netServiceBrowserDidStopSearch(_ browser: NetServiceBrowser) {
         queue.async { [weak self] in
             self?.isSearching = false
         }
     }
 }
 
-extension BonjourBrowser: NSNetServiceDelegate {
-    func netServiceDidResolveAddress(_ sender: NSNetService) {
+extension BonjourBrowser: NetServiceDelegate {
+    func netServiceDidResolveAddress(_ sender: NetService) {
         guard let host = sender.hostName, sender.port > 0 else { return }
         let port = Int(sender.port)
         let service = DiscoveredBonjourService(
@@ -103,7 +103,7 @@ extension BonjourBrowser: NSNetServiceDelegate {
         }
     }
 
-    func netService(_ sender: NSNetService, didNotResolve error: [String: NSNumber]) {
+    func netService(_ sender: NetService, didNotResolve error: [String: NSNumber]) {
         resolvingServices.removeAll { $0 === sender }
     }
 }

@@ -201,6 +201,34 @@ final class HTTPServer {
             let result = Self.trustWorkspace(workspace)
             let json = (try? JSONSerialization.data(withJSONObject: result)) ?? Data()
             send(conn: conn, status: "200 OK", body: json, contentType: "application/json")
+        } else if req.method == "GET" && req.path == "/download" {
+            guard let filePath = req.queryParams["path"], !filePath.isEmpty else {
+                send(conn: conn, status: "400 Bad Request", body: "{\"error\":\"Missing path\"}", contentType: "application/json")
+                conn.cancel()
+                return
+            }
+            let fm = FileManager.default
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: filePath, isDirectory: &isDir), !isDir.boolValue else {
+                send(conn: conn, status: "404 Not Found", body: "{\"error\":\"File not found or is a directory\"}", contentType: "application/json")
+                conn.cancel()
+                return
+            }
+            guard let fileData = fm.contents(atPath: filePath) else {
+                send(conn: conn, status: "500 Internal Server Error", body: "{\"error\":\"Cannot read file\"}", contentType: "application/json")
+                conn.cancel()
+                return
+            }
+            let filename = (filePath as NSString).lastPathComponent
+            let encoded = filename.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? filename
+            let contentType = Self.mimeType(for: filename)
+            var header = "HTTP/1.1 200 OK\r\n"
+            header += "Content-Type: \(contentType)\r\n"
+            header += "Content-Length: \(fileData.count)\r\n"
+            header += "Content-Disposition: attachment; filename=\"\(encoded)\"\r\n"
+            header += "Connection: close\r\n\r\n"
+            conn.send(content: Data(header.utf8), completion: .contentProcessed { _ in })
+            conn.send(content: fileData, completion: .contentProcessed { _ in })
         } else if req.method == "GET" && req.path == "/health" {
             send(conn: conn, status: "200 OK", body: "{\"ok\":true}", contentType: "application/json")
         } else {
@@ -220,6 +248,24 @@ final class HTTPServer {
 
     private func send(conn: NWConnection, status: String, body: String, contentType: String? = nil) {
         send(conn: conn, status: status, body: Data(body.utf8), contentType: contentType)
+    }
+
+    static func mimeType(for filename: String) -> String {
+        let ext = (filename as NSString).pathExtension.lowercased()
+        switch ext {
+        case "apk": return "application/vnd.android.package-archive"
+        case "ipa": return "application/octet-stream"
+        case "zip": return "application/zip"
+        case "dmg": return "application/x-apple-diskimage"
+        case "tar": return "application/x-tar"
+        case "gz", "tgz": return "application/gzip"
+        case "pdf": return "application/pdf"
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "json": return "application/json"
+        case "txt", "log", "md": return "text/plain"
+        default: return "application/octet-stream"
+        }
     }
 
     static func listFiles(at path: String) -> [String: Any] {

@@ -55,6 +55,16 @@ struct CodeViewerView: View {
                 Button("Close") { dismiss() }
             }
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    DownloadManager.shared.startDownload(
+                        remotePath: file.path,
+                        peer: peer,
+                        wifiURL: wifiURL,
+                        connectionMode: connectionMode
+                    )
+                } label: {
+                    Image(systemName: "arrow.down.circle")
+                }
                 if !loading && content.isEmpty == false {
                     Button {
                         isEditing.toggle()
@@ -101,7 +111,7 @@ struct CodeViewerView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color(.systemGray6))
+        .background(Color(.secondarySystemGroupedBackground))
     }
 
     private var lineNumberedCode: some View {
@@ -112,7 +122,7 @@ struct CodeViewerView: View {
                 ForEach(Array(lines.enumerated()), id: \.offset) { idx, _ in
                     Text(String(format: "%\(digitCount)d", idx + 1))
                         .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(Color(.systemGray3))
+                        .foregroundStyle(Color(.tertiaryLabel))
                 }
             }
             .padding(.trailing, 8)

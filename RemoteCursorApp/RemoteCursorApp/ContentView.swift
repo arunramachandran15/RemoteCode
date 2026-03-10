@@ -1,5 +1,26 @@
 import SwiftUI
 
+struct ThemePickerMenu: View {
+    @AppStorage("appTheme") private var appTheme: String = AppTheme.system.rawValue
+
+    private var current: AppTheme { AppTheme(rawValue: appTheme) ?? .system }
+
+    var body: some View {
+        Menu {
+            ForEach(AppTheme.allCases, id: \.rawValue) { theme in
+                Button {
+                    appTheme = theme.rawValue
+                } label: {
+                    Label(theme.label, systemImage: theme.icon)
+                }
+                .disabled(theme == current)
+            }
+        } label: {
+            Image(systemName: current.icon)
+        }
+    }
+}
+
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -77,6 +98,9 @@ struct ContentView: View {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Disconnect") { disconnect() }
                     }
+                    ToolbarItem(placement: .primaryAction) {
+                        ThemePickerMenu()
+                    }
                 }
             }
             .tabItem {
@@ -101,6 +125,9 @@ struct ContentView: View {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Disconnect") { disconnect() }
                     }
+                    ToolbarItem(placement: .primaryAction) {
+                        ThemePickerMenu()
+                    }
                 }
             }
             .tabItem {
@@ -118,12 +145,35 @@ struct ContentView: View {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Disconnect") { disconnect() }
                     }
+                    ToolbarItem(placement: .primaryAction) {
+                        ThemePickerMenu()
+                    }
                 }
             }
             .tabItem {
                 Label("Files", systemImage: "folder")
             }
             .tag(2)
+
+            NavigationStack {
+                DownloadsView(
+                    peer: peer,
+                    wifiURL: wifiURL,
+                    connectionMode: connectionMode ?? .wifi
+                )
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Disconnect") { disconnect() }
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        ThemePickerMenu()
+                    }
+                }
+            }
+            .tabItem {
+                Label("Downloads", systemImage: "arrow.down.circle")
+            }
+            .tag(3)
         }
         .overlay {
             if isReconnecting { reconnectingOverlay }
@@ -138,9 +188,13 @@ struct ContentView: View {
                 sidebarButton(label: "Agent", icon: "brain", tag: 0)
                 sidebarButton(label: "Terminal", icon: "terminal", tag: 1)
                 sidebarButton(label: "Files", icon: "folder", tag: 2)
+                sidebarButton(label: "Downloads", icon: "arrow.down.circle", tag: 3)
             }
             .navigationTitle("Remote Cursor")
             .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    ThemePickerMenu()
+                }
                 ToolbarItem(placement: .bottomBar) {
                     Button("Disconnect") { disconnect() }
                         .foregroundStyle(.red)
@@ -164,6 +218,12 @@ struct ContentView: View {
                     )
                 case 2:
                     FileBrowserView(
+                        peer: peer,
+                        wifiURL: wifiURL,
+                        connectionMode: connectionMode ?? .wifi
+                    )
+                case 3:
+                    DownloadsView(
                         peer: peer,
                         wifiURL: wifiURL,
                         connectionMode: connectionMode ?? .wifi

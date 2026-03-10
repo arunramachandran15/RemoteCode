@@ -57,7 +57,7 @@ struct TerminalView: View {
                                     .lineLimit(1)
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 6)
-                                    .background(Color(.systemGray5))
+                                    .background(Color(.tertiarySystemGroupedBackground))
                                     .cornerRadius(6)
                             }
                             .buttonStyle(.plain)
@@ -66,7 +66,7 @@ struct TerminalView: View {
                     .padding(.horizontal)
                     .padding(.vertical, 6)
                 }
-                .background(Color(.systemGray6))
+                .background(Color(.secondarySystemGroupedBackground))
             }
 
             HStack(spacing: 8) {
@@ -141,11 +141,12 @@ struct TerminalView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         Text(out)
                             .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(Color(.label))
                             .textSelection(.enabled)
                     }
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.systemGray6))
+                    .background(Color(.secondarySystemGroupedBackground))
                     .cornerRadius(6)
                 }
                 if let err = result.stderr, !err.isEmpty {
@@ -157,7 +158,7 @@ struct TerminalView: View {
                     }
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.systemGray6))
+                    .background(Color(.secondarySystemGroupedBackground))
                     .cornerRadius(6)
                 }
 

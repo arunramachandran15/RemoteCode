@@ -4,6 +4,19 @@ import Combine
 private let sessionStorageKey = "agent_sessions"
 private let pageSize = 50
 
+// MARK: - Adaptive Theme Colors
+
+private struct ChatColors {
+    @Environment(\.colorScheme) static var scheme
+
+    static var userBubble: Color { Color.blue }
+    static var userBubbleText: Color { .white }
+    static var assistantBubble: Color { Color(.secondarySystemGroupedBackground) }
+    static var inputBarBg: Color { Color(.systemBackground) }
+    static var codeBg: Color { Color(.secondarySystemGroupedBackground) }
+    static var badgeBg: Color { Color.blue.opacity(0.15) }
+}
+
 // MARK: - Timestamp Formatting
 
 private func chatTimestamp(_ date: Date) -> String {
@@ -112,7 +125,6 @@ struct AgentView: View {
     @State private var savedWorkspaces: [ChatStore.WorkspaceSummary] = []
     @State private var conversations: [Conversation] = []
     @State private var activeConversation: Conversation?
-    @State private var showChatDetail = false
     @State private var showRepoBrowser = false
     @State private var loadError: String?
     @State private var initialLoad = true
@@ -129,7 +141,10 @@ struct AgentView: View {
     private func setSessionId(workspace: String, value: String?) {
         var d = (try? JSONDecoder().decode([String: String].self, from: Data(sessionStorageData.utf8))) ?? [:]
         if let v = value { d[workspace] = v } else { d.removeValue(forKey: workspace) }
-        if let data = try? JSONEncoder().encode(d), let s = String(data: data, encoding: .utf8) {
+        let enc = JSONEncoder()
+        enc.outputFormatting = .sortedKeys
+        if let data = try? enc.encode(d), let s = String(data: data, encoding: .utf8) {
+            guard s != sessionStorageData else { return }
             sessionStorageData = s
         }
     }
@@ -186,7 +201,7 @@ struct AgentView: View {
                                         .font(.caption)
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 2)
-                                        .background(Color.blue.opacity(0.15))
+                                        .background(ChatColors.badgeBg)
                                         .clipShape(Capsule())
                                     Text(chatTimestamp(ws.lastActivity))
                                         .font(.caption2)
@@ -354,8 +369,8 @@ struct AgentView: View {
         } message: { action in
             Text(action.message)
         }
-        .fullScreenCover(isPresented: $showChatDetail) {
-            if let conv = activeConversation, let repo = selectedRepo {
+        .fullScreenCover(item: $activeConversation) { conv in
+            if let repo = selectedRepo {
                 NavigationStack {
                     ChatDetailView(
                         peer: peer,
@@ -365,12 +380,11 @@ struct AgentView: View {
                         conversation: conv,
                         repoSessionId: getSessionId(workspace: repo.path),
                         onConnectionLost: onConnectionLost,
-                        onSessionUpdated: { newSid in
-                            setSessionId(workspace: repo.path, value: newSid)
-                            reloadConversations()
-                        },
-                        onDismiss: {
-                            showChatDetail = false
+                        onDismiss: { latestSessionId in
+                            if let sid = latestSessionId {
+                                setSessionId(workspace: repo.path, value: sid)
+                            }
+                            activeConversation = nil
                             reloadConversations()
                             loadSavedWorkspaces()
                         }
@@ -419,25 +433,22 @@ struct AgentView: View {
     }
 
     private func openConversation(_ conv: Conversation) {
-        activeConversation = conv
         ChatStore.shared.markConversationRead(conversationId: conv.id)
-        showChatDetail = true
+        activeConversation = conv
     }
 
     private func startNewChat() {
         guard let repo = selectedRepo else { return }
         let existingSessionId = getSessionId(workspace: repo.path)
         let conv = ChatStore.shared.createConversation(workspacePath: repo.path, sessionId: existingSessionId, title: "")
-        activeConversation = conv
-        showChatDetail = true
         reloadConversations()
+        activeConversation = conv
     }
 
     private func openOrCreateConversationWithMessage(_ msg: String) {
         guard let repo = selectedRepo else { return }
         let conv = ChatStore.shared.createConversation(workspacePath: repo.path, sessionId: getSessionId(workspace: repo.path), title: "")
         activeConversation = conv
-        showChatDetail = true
     }
 
     private func deleteConversation(_ conv: Conversation) {
@@ -504,16 +515,27 @@ struct AgentView: View {
 
     private func reloadConversations() {
         guard let repo = selectedRepo else { conversations = []; return }
-        conversations = ChatStore.shared.listConversations(workspacePath: repo.path)
+        let path = repo.path
+        Task.detached {
+            let convs = ChatStore.shared.listConversations(workspacePath: path)
+            await MainActor.run { conversations = convs }
+        }
     }
 
     private func loadSavedWorkspaces() {
-        savedWorkspaces = ChatStore.shared.distinctWorkspaces()
-        if selectedRepo == nil, !lastSelectedRepoPath.isEmpty {
-            if savedWorkspaces.contains(where: { $0.path == lastSelectedRepoPath }) {
-                selectedRepo = RepoItem(id: lastSelectedRepoPath, path: lastSelectedRepoPath)
-            } else if let first = savedWorkspaces.first {
-                selectedRepo = RepoItem(id: first.path, path: first.path)
+        let savedRepoPath = lastSelectedRepoPath
+        let currentRepo = selectedRepo
+        Task.detached {
+            let workspaces = ChatStore.shared.distinctWorkspaces()
+            await MainActor.run {
+                savedWorkspaces = workspaces
+                if currentRepo == nil, !savedRepoPath.isEmpty {
+                    if workspaces.contains(where: { $0.path == savedRepoPath }) {
+                        selectedRepo = RepoItem(id: savedRepoPath, path: savedRepoPath)
+                    } else if let first = workspaces.first {
+                        selectedRepo = RepoItem(id: first.path, path: first.path)
+                    }
+                }
             }
         }
     }
@@ -836,8 +858,7 @@ struct ChatDetailView: View {
     let conversation: Conversation
     let repoSessionId: String?
     var onConnectionLost: (() -> Void)?
-    var onSessionUpdated: ((String) -> Void)?
-    var onDismiss: () -> Void
+    var onDismiss: (String?) -> Void
 
     @State private var chatMessages: [ChatMessage] = []
     @State private var flatItems: [ChatItem] = []
@@ -924,15 +945,14 @@ struct ChatDetailView: View {
                             }
 
                             Color.clear
-                                .frame(height: 60)
+                                .frame(height: 1)
                                 .id("bottom")
-                                .onAppear { withAnimation(.none) { isNearBottom = true } }
-                                .onDisappear { withAnimation(.none) { isNearBottom = false } }
                         }
                         .padding(.horizontal, 12)
                     }
                     .scrollDismissesKeyboard(.interactively)
-                    .onReceive(Timer.publish(every: 0.08, on: .main, in: .common).autoconnect()) { _ in
+                    .coordinateSpace(name: "chatScroll")
+                    .onReceive(Timer.publish(every: 0.12, on: .main, in: .common).autoconnect()) { _ in
                         guard !streamingBuffer.isEmpty else { return }
                         streamingContent += streamingBuffer
                         streamingBuffer = ""
@@ -941,24 +961,33 @@ struct ChatDetailView: View {
                         }
                     }
                     .onChange(of: flatItems.count) { _ in
-                        if isNearBottom {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        guard isNearBottom else { return }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            withAnimation(.easeOut(duration: 0.15)) {
                                 proxy.scrollTo("bottom", anchor: .bottom)
                             }
                         }
                     }
                     .onChange(of: loadingMessages) { newValue in
-                        if !newValue {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                proxy.scrollTo("bottom", anchor: .bottom)
-                            }
+                        guard !newValue else { return }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     }
                     .onAppear { scrollProxy = proxy }
+                    .simultaneousGesture(
+                        DragGesture()
+                            .onChanged { value in
+                                if value.translation.height > 10 {
+                                    isNearBottom = false
+                                }
+                            }
+                    )
                 }
 
                 if !isNearBottom {
                     Button {
+                        isNearBottom = true
                         withAnimation(.easeOut(duration: 0.25)) {
                             scrollProxy?.scrollTo("bottom", anchor: .bottom)
                         }
@@ -982,7 +1011,7 @@ struct ChatDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Back") { onDismiss() }
+                Button("Back") { onDismiss(sessionId) }
             }
         }
         .onAppear {
@@ -997,12 +1026,13 @@ struct ChatDetailView: View {
         }) {
             voiceOverlay
         }
-        .sheet(isPresented: $showImagePicker) {
+        .sheet(isPresented: $showImagePicker, onDismiss: {
+            // Sheet dismissed by picker's own dismiss(animated:) — binding auto-updates
+        }) {
             ImagePicker(source: imagePickerSource) { data in
                 if !data.isEmpty {
                     pendingImageData = data
                 }
-                showImagePicker = false
             }
         }
         .confirmationDialog("Attach Image", isPresented: $showImageSourcePicker) {
@@ -1115,15 +1145,17 @@ struct ChatDetailView: View {
                     Text(msg.content)
                         .textSelection(.enabled)
                         .padding(10)
-                        .background(Color.blue)
-                        .foregroundStyle(.white)
+                        .background(ChatColors.userBubble)
+                        .foregroundStyle(ChatColors.userBubbleText)
                         .cornerRadius(16)
                 } else {
                     MarkdownView(content: msg.content, onRunCommand: { cmd in
                         executeCommand(cmd)
+                    }, onDownloadFile: { path in
+                        downloadFile(path)
                     })
                     .padding(10)
-                    .background(Color(.systemGray6))
+                    .background(ChatColors.assistantBubble)
                     .cornerRadius(16)
                 }
                 HStack(spacing: 4) {
@@ -1146,9 +1178,11 @@ struct ChatDetailView: View {
     private var streamingBubble: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                MarkdownView(content: streamingContent, onRunCommand: { _ in })
+                Text(streamingContent)
+                    .textSelection(.enabled)
+                    .font(.body)
                     .padding(10)
-                    .background(Color(.systemGray6))
+                    .background(ChatColors.assistantBubble)
                     .cornerRadius(16)
             }
             Spacer(minLength: 40)
@@ -1200,7 +1234,7 @@ struct ChatDetailView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color(.systemGray6))
+                .background(Color(.tertiarySystemGroupedBackground))
             }
 
             HStack(alignment: .bottom, spacing: 8) {
@@ -1218,7 +1252,7 @@ struct ChatDetailView: View {
                     .textFieldStyle(.plain)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(Color(.systemGray6))
+                    .background(Color(.tertiarySystemBackground))
                     .cornerRadius(20)
 
                 Button {
@@ -1301,7 +1335,7 @@ struct ChatDetailView: View {
                             .padding()
                     }
                     .frame(maxHeight: isReview ? 250 : 160)
-                    .background(isReview ? Color(.systemGray5) : Color(.systemGray6))
+                    .background(isReview ? Color(.secondarySystemGroupedBackground) : Color(.tertiarySystemGroupedBackground))
                     .cornerRadius(12)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
@@ -1379,7 +1413,7 @@ struct ChatDetailView: View {
                             .font(.system(.callout, design: .monospaced))
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(.systemGray6))
+                            .background(Color(.secondarySystemGroupedBackground))
                             .cornerRadius(8)
                     }
                     if let result = commandResult {
@@ -1397,7 +1431,7 @@ struct ChatDetailView: View {
                             }
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(.systemGray6)).cornerRadius(8)
+                            .background(Color(.secondarySystemGroupedBackground)).cornerRadius(8)
                         }
                         if let err = result.stderr, !err.isEmpty {
                             Text("stderr").font(.caption).foregroundStyle(.secondary)
@@ -1406,7 +1440,7 @@ struct ChatDetailView: View {
                             }
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(.systemGray6)).cornerRadius(8)
+                            .background(Color(.secondarySystemGroupedBackground)).cornerRadius(8)
                         }
                     } else {
                         HStack { ProgressView(); Text("Running…") }
@@ -1506,18 +1540,19 @@ struct ChatDetailView: View {
                     }
                 }
                 await MainActor.run {
-                    streamingContent += streamingBuffer
-                    streamingBuffer = ""
-
                     if let newSid = res.sessionId {
                         sessionId = newSid
-                        onSessionUpdated?(newSid)
                     }
                     let content = (res.output ?? "") + (res.error.map { "\n\nError: \($0)" } ?? "")
                     let errText = (res.error ?? "").lowercased()
                     if errText.contains("workspace trust") || errText.contains("pass --trust") || errText.contains("--yolo") {
                         showTrustAlert = true
                     }
+
+                    streamingContent = ""
+                    streamingBuffer = ""
+                    loading = false
+
                     if !content.isEmpty {
                         let assistantMsg = ChatMessage(
                             id: UUID().uuidString,
@@ -1532,8 +1567,6 @@ struct ChatDetailView: View {
                         chatMessages.append(assistantMsg)
                         rebuildFlatItems()
                     }
-                    streamingContent = ""
-                    loading = false
                 }
             } catch {
                 await MainActor.run {
@@ -1618,6 +1651,11 @@ struct ChatDetailView: View {
                 }
                 await MainActor.run {
                     uploadingImage = false
+                    guard !remotePath.isEmpty else {
+                        imageUploadError = "Upload succeeded but no file path was returned."
+                        if !userText.isEmpty { message = userText }
+                        return
+                    }
                     let imageRef = "I've attached a screenshot saved at: \(remotePath)\nPlease look at this image and help me with what you see."
                     message = userText.isEmpty ? imageRef : "\(userText)\n\n\(imageRef)"
                     sendMessage()
@@ -1630,6 +1668,15 @@ struct ChatDetailView: View {
                 }
             }
         }
+    }
+
+    private func downloadFile(_ remotePath: String) {
+        DownloadManager.shared.startDownload(
+            remotePath: remotePath,
+            peer: peer,
+            wifiURL: wifiURL,
+            connectionMode: connectionMode
+        )
     }
 
     private func isConnectionError(_ error: Error) -> Bool {

@@ -87,6 +87,23 @@ final class PeerConnection: NSObject {
             }
             let result = HTTPServer.trustWorkspace(workspace)
             for (k, v) in result { response[k] = v }
+        case "downloadFile":
+            guard let filePath = json["path"] as? String else {
+                response["error"] = "Missing path"
+                break
+            }
+            let fm = FileManager.default
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: filePath, isDirectory: &isDir), !isDir.boolValue else {
+                response["error"] = "File not found or is a directory"
+                break
+            }
+            guard let data = fm.contents(atPath: filePath) else {
+                response["error"] = "Cannot read file"
+                break
+            }
+            response["data"] = data.base64EncodedString()
+            response["name"] = (filePath as NSString).lastPathComponent
         case "uploadImage":
             response["error"] = "Use resource transfer for image uploads"
         default:

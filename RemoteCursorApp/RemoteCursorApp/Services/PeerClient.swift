@@ -120,6 +120,20 @@ final class PeerClient: NSObject, ObservableObject, MCSessionDelegate, MCNearbyS
 
     private var pendingResourceContinuations: [String: CheckedContinuation<String, Error>] = [:]
 
+    func downloadFile(remotePath: String, to localURL: URL, onProgress: @escaping (Double) -> Void) async throws {
+        let dict = try await sendRequest(type: "downloadFile", params: ["path": remotePath], key: nil) as? [String: Any]
+        if let error = dict?["error"] as? String {
+            throw NSError(domain: "PeerClient", code: -1, userInfo: [NSLocalizedDescriptionKey: error])
+        }
+        guard let b64 = dict?["data"] as? String, let data = Data(base64Encoded: b64) else {
+            throw NSError(domain: "PeerClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "No file data returned"])
+        }
+        let dir = localURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try data.write(to: localURL)
+        await MainActor.run { onProgress(1.0) }
+    }
+
     func trustWorkspace(_ workspace: String) async throws -> (ok: Bool, message: String) {
         let dict = try await sendRequest(type: "trustWorkspace", params: ["workspace": workspace], key: nil) as? [String: Any]
         let ok = dict?["ok"] as? Bool ?? false
