@@ -1,1 +1,2 @@
-Repos/
+Repos/# Xcode user-specific state
+*.xcuserstate
