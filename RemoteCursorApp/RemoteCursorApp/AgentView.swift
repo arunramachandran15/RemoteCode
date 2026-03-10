@@ -1026,10 +1026,9 @@ struct ChatDetailView: View {
         }) {
             voiceOverlay
         }
-        .sheet(isPresented: $showImagePicker, onDismiss: {
-            // Sheet dismissed by picker's own dismiss(animated:) — binding auto-updates
-        }) {
+        .sheet(isPresented: $showImagePicker) {
             ImagePicker(source: imagePickerSource) { data in
+                showImagePicker = false
                 if !data.isEmpty {
                     pendingImageData = data
                 }
@@ -1637,6 +1636,7 @@ struct ChatDetailView: View {
     private func sendMessageWithImage() {
         guard let imgData = pendingImageData else { return }
         let userText = message.trimmingCharacters(in: .whitespaces)
+        message = ""
         pendingImageData = nil
         uploadingImage = true
 

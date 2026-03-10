@@ -74,14 +74,17 @@ struct ImagePicker: UIViewControllerRepresentable {
 
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
             guard let provider = results.first?.itemProvider, provider.canLoadObject(ofClass: UIImage.self) else {
-                DispatchQueue.main.async {
-                    self.onImagePicked(Data())
+                picker.dismiss(animated: true) {
+                    DispatchQueue.main.async {
+                        self.onImagePicked(Data())
+                    }
                 }
                 return
             }
+            picker.dismiss(animated: true)
             provider.loadObject(ofClass: UIImage.self) { [weak self] obj, _ in
                 let data = (obj as? UIImage).flatMap { Self.resizedJPEGData(from: $0) } ?? Data()
-                DispatchQueue.main.async {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     self?.onImagePicked(data)
                 }
             }
