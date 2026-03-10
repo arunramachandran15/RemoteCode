@@ -879,7 +879,7 @@ struct ChatDetailView: View {
     @State private var showImagePicker = false
     @State private var imagePickerSource: ImagePicker.Source = .photoLibrary
     @State private var showImageSourcePicker = false
-    @State private var pendingImageData: Data?
+    @State private var pendingImages: [Data] = []
     @State private var uploadingImage = false
     @State private var imageUploadError: String?
 
@@ -1027,10 +1027,10 @@ struct ChatDetailView: View {
             voiceOverlay
         }
         .sheet(isPresented: $showImagePicker) {
-            ImagePicker(source: imagePickerSource) { data in
+            ImagePicker(source: imagePickerSource) { images in
                 showImagePicker = false
-                if !data.isEmpty {
-                    pendingImageData = data
+                if !images.isEmpty {
+                    pendingImages.append(contentsOf: images)
                 }
             }
         }
@@ -1203,36 +1203,41 @@ struct ChatDetailView: View {
                 .padding(.vertical, 4)
             }
 
-            if let imgData = pendingImageData, let uiImage = UIImage(data: imgData) {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 80, height: 80)
-                        .cornerRadius(10)
-                        .clipped()
+            if !pendingImages.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(Array(pendingImages.enumerated()), id: \.offset) { index, imgData in
+                                if let uiImage = UIImage(data: imgData) {
+                                    ZStack(alignment: .topTrailing) {
+                                        Image(uiImage: uiImage)
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(width: 70, height: 70)
+                                            .cornerRadius(8)
+                                            .clipped()
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Photo attached")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                        Text("Tap send to upload & ask agent")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                                        Button {
+                                            pendingImages.remove(at: index)
+                                        } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .font(.caption)
+                                                .foregroundStyle(.white)
+                                                .background(Circle().fill(.black.opacity(0.5)))
+                                        }
+                                        .offset(x: 4, y: -4)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 12)
                     }
-
-                    Spacer()
-
-                    Button {
-                        pendingImageData = nil
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title3)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("\(pendingImages.count) photo\(pendingImages.count == 1 ? "" : "s") attached")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.vertical, 6)
                 .background(Color(.tertiarySystemGroupedBackground))
             }
 
@@ -1264,8 +1269,8 @@ struct ChatDetailView: View {
                 }
 
                 Button {
-                    if pendingImageData != nil {
-                        sendMessageWithImage()
+                    if !pendingImages.isEmpty {
+                        sendMessageWithImages()
                     } else {
                         sendMessage()
                     }
@@ -1273,11 +1278,11 @@ struct ChatDetailView: View {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
                         .foregroundStyle(
-                            (message.trimmingCharacters(in: .whitespaces).isEmpty && pendingImageData == nil) || loading
+                            (message.trimmingCharacters(in: .whitespaces).isEmpty && pendingImages.isEmpty) || loading
                                 ? Color.gray : Color.accentColor
                         )
                 }
-                .disabled((message.trimmingCharacters(in: .whitespaces).isEmpty && pendingImageData == nil) || loading)
+                .disabled((message.trimmingCharacters(in: .whitespaces).isEmpty && pendingImages.isEmpty) || loading)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -1633,30 +1638,41 @@ struct ChatDetailView: View {
         commandResult = nil
     }
 
-    private func sendMessageWithImage() {
-        guard let imgData = pendingImageData else { return }
+    private func sendMessageWithImages() {
+        guard !pendingImages.isEmpty else { return }
+        let images = pendingImages
         let userText = message.trimmingCharacters(in: .whitespaces)
         message = ""
-        pendingImageData = nil
+        pendingImages = []
         uploadingImage = true
 
         Task {
             do {
-                let remotePath: String
-                if connectionMode == .wifi {
-                    remotePath = try await HTTPClient(baseURL: wifiURL.trimmingCharacters(in: .whitespaces))
-                        .uploadImage(imgData)
-                } else {
-                    remotePath = try await peer.uploadImage(imgData)
+                var remotePaths: [String] = []
+                for imgData in images {
+                    let path: String
+                    if connectionMode == .wifi {
+                        path = try await HTTPClient(baseURL: wifiURL.trimmingCharacters(in: .whitespaces))
+                            .uploadImage(imgData)
+                    } else {
+                        path = try await peer.uploadImage(imgData)
+                    }
+                    if !path.isEmpty { remotePaths.append(path) }
                 }
                 await MainActor.run {
                     uploadingImage = false
-                    guard !remotePath.isEmpty else {
-                        imageUploadError = "Upload succeeded but no file path was returned."
+                    guard !remotePaths.isEmpty else {
+                        imageUploadError = "Upload succeeded but no file paths were returned."
                         if !userText.isEmpty { message = userText }
                         return
                     }
-                    let imageRef = "I've attached a screenshot saved at: \(remotePath)\nPlease look at this image and help me with what you see."
+                    let pathList = remotePaths.map { "- \($0)" }.joined(separator: "\n")
+                    let imageRef: String
+                    if remotePaths.count == 1 {
+                        imageRef = "I've attached a screenshot saved at: \(remotePaths[0])\nPlease look at this image and help me with what you see."
+                    } else {
+                        imageRef = "I've attached \(remotePaths.count) screenshots saved at:\n\(pathList)\nPlease look at these images and help me with what you see."
+                    }
                     message = userText.isEmpty ? imageRef : "\(userText)\n\n\(imageRef)"
                     sendMessage()
                 }

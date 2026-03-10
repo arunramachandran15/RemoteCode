@@ -8,7 +8,7 @@ struct ImagePicker: UIViewControllerRepresentable {
     }
 
     let source: Source
-    let onImagePicked: (Data) -> Void
+    let onImagesPicked: ([Data]) -> Void
 
     func makeUIViewController(context: Context) -> UIViewController {
         switch source {
@@ -20,7 +20,7 @@ struct ImagePicker: UIViewControllerRepresentable {
             return picker
         case .photoLibrary:
             var config = PHPickerConfiguration()
-            config.selectionLimit = 1
+            config.selectionLimit = 0
             config.filter = .images
             let picker = PHPickerViewController(configuration: config)
             picker.delegate = context.coordinator
@@ -31,15 +31,15 @@ struct ImagePicker: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onImagePicked: onImagePicked)
+        Coordinator(onImagesPicked: onImagesPicked)
     }
 
     final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate, PHPickerViewControllerDelegate {
-        let onImagePicked: (Data) -> Void
+        let onImagesPicked: ([Data]) -> Void
         private static let maxDimension: CGFloat = 1920
 
-        init(onImagePicked: @escaping (Data) -> Void) {
-            self.onImagePicked = onImagePicked
+        init(onImagesPicked: @escaping ([Data]) -> Void) {
+            self.onImagesPicked = onImagesPicked
         }
 
         private static func resizedJPEGData(from image: UIImage) -> Data? {
@@ -59,34 +59,44 @@ struct ImagePicker: UIViewControllerRepresentable {
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
             let image = info[.originalImage] as? UIImage
             let data = image.flatMap { Self.resizedJPEGData(from: $0) } ?? Data()
-            picker.dismiss(animated: true)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                self.onImagePicked(data)
+            DispatchQueue.main.async {
+                self.onImagesPicked(data.isEmpty ? [] : [data])
             }
         }
 
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            picker.dismiss(animated: true)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                self.onImagePicked(Data())
+            DispatchQueue.main.async {
+                self.onImagesPicked([])
             }
         }
 
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-            guard let provider = results.first?.itemProvider, provider.canLoadObject(ofClass: UIImage.self) else {
-                picker.dismiss(animated: true) {
-                    DispatchQueue.main.async {
-                        self.onImagePicked(Data())
-                    }
+            let providers = results.compactMap { $0.itemProvider.canLoadObject(ofClass: UIImage.self) ? $0.itemProvider : nil }
+            guard !providers.isEmpty else {
+                DispatchQueue.main.async {
+                    self.onImagesPicked([])
                 }
                 return
             }
-            picker.dismiss(animated: true)
-            provider.loadObject(ofClass: UIImage.self) { [weak self] obj, _ in
-                let data = (obj as? UIImage).flatMap { Self.resizedJPEGData(from: $0) } ?? Data()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    self?.onImagePicked(data)
+            let group = DispatchGroup()
+            var images: [(Int, Data)] = []
+            let lock = NSLock()
+
+            for (index, provider) in providers.enumerated() {
+                group.enter()
+                provider.loadObject(ofClass: UIImage.self) { obj, _ in
+                    if let uiImage = obj as? UIImage, let data = Self.resizedJPEGData(from: uiImage) {
+                        lock.lock()
+                        images.append((index, data))
+                        lock.unlock()
+                    }
+                    group.leave()
                 }
+            }
+
+            group.notify(queue: .main) { [weak self] in
+                let sorted = images.sorted { $0.0 < $1.0 }.map(\.1)
+                self?.onImagesPicked(sorted)
             }
         }
     }
